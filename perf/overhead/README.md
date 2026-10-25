@@ -5,7 +5,7 @@
 
 ## 돌리기
 
-monimo-backend 의 수집기가 떠 있어야 붙인 쪽이 실제로 데이터를 보낸다(`docker compose --profile collector up -d --wait`). 쇼핑몰은 **내려 둔 상태**에서 시작한다(스크립트가 직접 띄우고 내린다. 떠 있으면 멈춘다).
+monimo-backend 의 Collector 가 떠 있어야 붙인 쪽이 실제로 데이터를 보낸다(`docker compose --profile collector up -d --wait`). 쇼핑몰은 **내려 둔 상태**에서 시작한다(스크립트가 직접 띄우고 내린다. 떠 있으면 멈춘다).
 
 ```bash
 docker compose -f docker-compose.dev.yml build          # 이미지가 최신인지 먼저

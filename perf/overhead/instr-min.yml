@@ -1,5 +1,5 @@
 # 원인 찾기 실험 : 계측을 전부 끈 뒤 쇼핑몰이 실제로 쓰는 것만 켠다. 그물에 걸리지만 필요 없는 계측이
-# CPU · 메모리를 얼마나 먹는지 본다. 켜 둔 목록으로 서버맵 · 트레이스 모양(SERVER · HTTP · DB · Redis 스팬)은 그대로 나와야 한다.
+# CPU · 메모리를 얼마나 먹는지 본다. 켜 둔 목록으로 Service map · 트레이스 모양(SERVER · HTTP · DB · Redis 스팬)은 그대로 나와야 한다.
 # 운영 설정이 아니다 (실험용)
 x-env: &env
   OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED: "false"

@@ -1,11 +1,11 @@
 package com.monimo.shop.agentextension;
 
 /**
- * 수집기가 GET /agent/commands 의 200 응답으로 주는 명령.
+ * Collector 가 GET /agent/commands 의 200 응답으로 주는 명령.
  * {"command_id":"…","type":"THREAD_DUMP","reply_to":"http://collector-0.collector:8081","timeout_ms":10000}
  *
- * <p>reply_to 는 명령을 준 수집기 자신의 주소다. 결과는 Service 이름이 아니라 이 주소로 보낸다 (합의안 2 :
- * 수집기가 여러 대면 다른 수집기로 가 버려 기다리는 쪽이 못 받는다).
+ * <p>reply_to 는 명령을 준 Collector 자신의 주소다. 결과는 Service 이름이 아니라 이 주소로 보낸다 (합의안 2 :
+ * Collector 가 여러 대면 다른 Collector 로 가 버려 기다리는 쪽이 못 받는다).
  */
 record Command(String commandId, String type, String replyTo, long timeoutMs) {
 

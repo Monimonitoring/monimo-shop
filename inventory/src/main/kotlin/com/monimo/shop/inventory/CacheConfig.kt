@@ -18,7 +18,7 @@ import java.time.Duration
 /**
  * Redis 캐시 설정. 캐시는 조회(StockService.find)에만 쓴다 (research ⑧ : b1).
  * 키 : "stock::P-100" (캐시 이름 :: 상품 번호). 값 : StockResponse 를 JSON {"productId":"P-100","qty":999998} 으로. TTL 30초.
- * 에이전트가 Lettuce 호출을 GET · SET · DEL 스팬(db.system=redis)으로 남겨 서버맵에 inventory → Redis 노드가 생긴다.
+ * 에이전트가 Lettuce 호출을 GET · SET · DEL 스팬(db.system=redis)으로 남겨 Service map 에 inventory → Redis 노드가 생긴다.
  */
 @Configuration
 @EnableCaching

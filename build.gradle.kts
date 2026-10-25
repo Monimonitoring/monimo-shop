@@ -9,7 +9,7 @@ plugins {
 val javaVersion = libs.versions.java.get().toInt()
 
 // 쇼핑몰은 감시 대상이라 제품 기능이 없다. 서비스끼리는 HTTP 로만 부르고 코드로는 서로 의존하지 않는다.
-// 모듈 간 project 의존을 걸면 빌드가 바로 실패한다 (서버맵에 HTTP 홉이 그려져야 하므로).
+// 모듈 간 project 의존을 걸면 빌드가 바로 실패한다 (Service map 에 HTTP 홉이 그려져야 하므로).
 subprojects {
     group = "com.monimo.shop"
     version = "0.0.1-SNAPSHOT"

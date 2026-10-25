@@ -11,7 +11,7 @@ OTel Java Agent 에 얹는 스레드 덤프 명령 수신 Extension. 우리가 �
 쇼핑몰 JVM
  └─ 에이전트 + Extension
       afterAgent() : 데몬 스레드 monimo-command-poller 하나만 띄우고 바로 돌아온다 (앱 main 보다 먼저 불리기 때문)
-      일꾼 스레드   : GET  {수집기}/agent/commands?service=…&instance=…   (수집기가 최대 25초 붙잡는다)
+      일꾼 스레드   : GET  {Collector}/agent/commands?service=…&instance=…   (Collector 가 최대 25초 붙잡는다)
                      ← 204 : 명령 없음, 곧바로 다시 묻는다
                      ← 200 THREAD_DUMP : 이 JVM 의 덤프 → POST {reply_to}/agent/commands/{id}/result
 ```
@@ -20,7 +20,7 @@ OTel Java Agent 에 얹는 스레드 덤프 명령 수신 Extension. 우리가 �
 - **모든 HTTP 호출을 `InstrumentationUtil.suppressInstrumentation` 으로 감싼다.** 안 감싸면 에이전트가 이 호출도 스팬으로 남겨 25초마다 가짜 트레이스가 쌓인다
 - 식별 값(`service.name` · `service.instance.id`)은 에이전트가 만든 Resource 에서 읽는다 (`ConfigCapture`). 백엔드 `agent_id` 와 같은 값이다
 - `THREAD_DUMP` 말고는 무시한다. 덤프는 jstack 모양, 스레드마다 스택 128줄까지. 10초 안에 또 오면 직전 결과를 다시 준다(덤프마다 JVM 이 잠깐 멈추므로)
-- 결과 보내기가 실패하면 1초 간격 3번까지, 404(이미 끝난 명령)면 그만. 수집기에 안 닿으면 1 → 60초 백오프 + 무작위
+- 결과 보내기가 실패하면 1초 간격 3번까지, 404(이미 끝난 명령)면 그만. Collector 에 안 닿으면 1 → 60초 백오프 + 무작위
 
 ## 설정
 
@@ -28,13 +28,13 @@ OTel Java Agent 에 얹는 스레드 덤프 명령 수신 Extension. 우리가 �
 
 | 키 (환경변수) | 기본값 | 설명 |
 |---|---|---|
-| `otel.monimo.agent.token` (`OTEL_MONIMO_AGENT_TOKEN`) | 없음 | 수집기 `MONIMO_AGENT_TOKEN` 과 같은 값. **비우면 Extension 이 아무것도 안 한다** |
-| `otel.monimo.collector.url` (`OTEL_MONIMO_COLLECTOR_URL`) | `http://collector:8081` | 수집기 HTTP 주소 (OTLP 4317 이 아니라 Spring MVC 쪽) |
+| `otel.monimo.agent.token` (`OTEL_MONIMO_AGENT_TOKEN`) | 없음 | Collector `MONIMO_AGENT_TOKEN` 과 같은 값. **비우면 Extension 이 아무것도 안 한다** |
+| `otel.monimo.collector.url` (`OTEL_MONIMO_COLLECTOR_URL`) | `http://collector:8081` | Collector HTTP 주소 (OTLP 4317 이 아니라 Spring MVC 쪽) |
 
-## 수집기 쪽
+## Collector 쪽
 
-`monimo-backend` 수집기의 문 셋 (backend `#122`) : `GET /agent/commands` · `POST /agent/commands/{id}/result` · `POST /internal/thread-dump`.
-덤프를 손으로 떠 보려면 (backend 수집기가 떠 있을 때) :
+`monimo-backend` Collector 의 문 셋 (backend `#122`) : `GET /agent/commands` · `POST /agent/commands/{id}/result` · `POST /internal/thread-dump`.
+덤프를 손으로 떠 보려면 (backend Collector 가 떠 있을 때) :
 
 ```bash
 docker run --rm --network monimo-dev curlimages/curl:8.10.1 -s -X POST http://collector:8081/internal/thread-dump \

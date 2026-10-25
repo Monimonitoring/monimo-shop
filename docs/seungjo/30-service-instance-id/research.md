@@ -1,5 +1,7 @@
 # 리서치 : 재시작해도 그대로인 에이전트 식별자 (`service.instance.id`)
 
+> 용어만 glossary(`monimo-backend/docs/design/glossary.md`) 기준으로 바꿈 (`#240`) : 원문 인용도 용어만 바꾸고 문장은 그대로 뒀다
+
 - 날짜 2026-10-06 / 관련 이슈 `#30`
 - 쓴 도구 : 웹 리서치 서브에이전트 1개 · 로컬 ClickHouse 조회 · 에이전트 jar 직접 열어 확인
 
@@ -18,7 +20,7 @@
 | | |
 |---|---|
 | 건드리는 모듈 · 파일 | `docker-compose.dev.yml` · 서비스별 `Dockerfile` 또는 `otel/agent.properties` (결정에 따라), `README.md` · `AGENTS.md` |
-| 건드리지 않는 것 | 앱 코드(에이전트는 비침습, ADR `#33`), 적재 처리기의 식별자 고르는 순서(backend `#58`) |
+| 건드리지 않는 것 | 앱 코드(에이전트는 비침습, ADR `#33`), Ingester 의 식별자 고르는 순서(backend `#58`) |
 | 이 이슈 범위 밖 (후속) | 실제 쿠버네티스 매니페스트(`monimo-deploy` 는 아직 비어 있다). 여기서는 넣을 조각만 문서로 남긴다 |
 
 **조사 들어가기 전에 내가 알던 것 (세 줄)** : 
@@ -37,7 +39,7 @@
 
 OTel 이 정한 표준 속성으로, "같은 서비스의 여러 복제본 중 **이것 하나**" 를 가리킨다. `shop-order` 가 파드 두 개로 떠 있으면 `service.name` 은 둘 다 `shop-order` 이고 이 값만 다르다.
 
-우리 백엔드는 이 값을 그대로 **`agent_id`** 로 쓴다. 적재 처리기(`ingester/.../transform/OtlpValues.kt`)가 리소스 속성을 `service.instance.id` → `k8s.pod.name` → `host.name` 순으로 보고 처음 나온 것을 고른다(backend `#58`). 쇼핑몰은 이 셋 중 아무것도 직접 넣고 있지 않다.
+우리 백엔드는 이 값을 그대로 **`agent_id`** 로 쓴다. Ingester(`ingester/.../transform/OtlpValues.kt`)가 리소스 속성을 `service.instance.id` → `k8s.pod.name` → `host.name` 순으로 보고 처음 나온 것을 고른다(backend `#58`). 쇼핑몰은 이 셋 중 아무것도 직접 넣고 있지 않다.
 
 ### 2.2 지금은 누가 채우고 있나 : SDK 의 랜덤 UUID
 
@@ -96,7 +98,7 @@ env:
   에이전트가 뜰 때 리소스 만들기 : 시스템 프로퍼티 > 환경변수 > agent.properties > (없으면) 랜덤 UUID
        │ 스팬 · 지표 · 로그마다 resource.service.instance.id 를 붙여 보냄
        ▼
-수집기 (OTLP 4317) ── Kafka raw ──▶ 적재 처리기
+Collector (OTLP 4317) ── Kafka raw ──▶ Ingester
                                     service.instance.id → k8s.pod.name → host.name 중 첫 값 = agent_id
                                     ▼
                                ClickHouse spans.agent_id · metrics_raw · logs
@@ -127,7 +129,7 @@ compose 파일의 `${VAR}` 는 **내 컴퓨터 쪽** 값으로 바뀐다. 컨테
 | 파드 이름을 쓰면 배포해도 같은 에이전트로 보인다 | 아니다. 컨테이너 재시작만 유지된다. 배포는 새 파드라 새 이름이다 |
 | `OTEL_RESOURCE_ATTRIBUTES` 에 하나 더 적으면 `agent.properties` 값에 붙는다 | 아니다. 같은 키라 통째로 바뀐다. `deployment.environment.name` 을 같이 적어야 한다 |
 | UUID 를 끄는 설정을 따로 해야 한다 | 아니다. 값을 주기만 하면 UUID provider 는 건너뛴다 (incubator 판 `shouldApply`) |
-| 백엔드도 고쳐야 한다 | 아니다. 적재 처리기가 이미 `service.instance.id` 를 1순위로 본다 |
+| 백엔드도 고쳐야 한다 | 아니다. Ingester 가 이미 `service.instance.id` 를 1순위로 본다 |
 | `$(POD_NAME)` 은 쉘이 바꿔 준다 | 쿠버네티스가 바꾼다. 위에 정의된 변수만, 없으면 글자 그대로 남는다 |
 
 ---
@@ -152,7 +154,7 @@ compose 파일의 `${VAR}` 는 **내 컴퓨터 쪽** 값으로 바뀐다. 컨테
 - **Q. 세 길 중 우선순위가 가장 높은 시스템 프로퍼티가 가장 좋은 방법인가**
   - A. 아니다. 우선순위는 "셋 다 있을 때 누가 이기나" 일 뿐이다. 쿠버네티스의 `$(POD_NAME)` 치환은 **환경변수 값 안에서만** 되므로, 파드 이름을 넣는 정석은 환경변수다. 시스템 프로퍼티는 이미지(`ENTRYPOINT`)에 박히고, 설정 파일은 네 서비스가 같은 내용을 쓰므로 파드마다 다른 값을 넣을 수 없다. 길별 비교는 5 절.
 - **Q. `service.instance.id` · `k8s.pod.name` · `host.name` 은 각각 어떻게 들어가나**
-  - A. `service.instance.id` 는 우리가 주거나, 안 주면 SDK 가 UUID 를 넣는다. `host.name` 은 SDK 가 컨테이너의 hostname 을 읽어 자동으로 넣는다(docker 는 컨테이너 ID, 쿠버네티스는 기본이 파드 이름). `k8s.pod.name` 은 Java 에이전트가 스스로 넣지 않는다 : OTel Operator 나 수집기의 k8sattributes 같은 바깥 도구가 넣거나 우리가 직접 적어야 한다. 지금은 1순위가 UUID 로 늘 차 있어서 2 · 3순위까지 내려가지 않는다. (`host.name` 이 실제로 실려 오는지는 로컬에서 확인 예정)
+  - A. `service.instance.id` 는 우리가 주거나, 안 주면 SDK 가 UUID 를 넣는다. `host.name` 은 SDK 가 컨테이너의 hostname 을 읽어 자동으로 넣는다(docker 는 컨테이너 ID, 쿠버네티스는 기본이 파드 이름). `k8s.pod.name` 은 Java 에이전트가 스스로 넣지 않는다 : OTel Operator 나 Collector 의 k8sattributes 같은 바깥 도구가 넣거나 우리가 직접 적어야 한다. 지금은 1순위가 UUID 로 늘 차 있어서 2 · 3순위까지 내려가지 않는다. (`host.name` 이 실제로 실려 오는지는 로컬에서 확인 예정)
 - **Q. `java -D이름=값` 의 `-D이름=값` 이 곧 `agent.properties` 인가. 모든 서비스가 그 파일을 쓰나**
   - A. 둘은 다른 길이다. `-D` 는 java 명령줄에 직접 붙이는 값이고, `agent.properties` 는 파일이다. 우리 `ENTRYPOINT` 의 `-Dotel.javaagent.configuration-file=/app/otel/agent.properties` 는 "설정 파일은 여기 있다" 는 **위치만 알려 주는** `-D` 다. 파일은 레포에 하나(`otel/agent.properties`)이고, 네 서비스 Dockerfile 이 각자 이미지 안으로 복사해 간다. 그래서 내용은 같고, 서비스마다 다른 값(이름표)은 이 파일에 넣을 수 없다.
 
@@ -166,7 +168,7 @@ compose 파일의 `${VAR}` 는 **내 컴퓨터 쪽** 값으로 바뀐다. 컨테
 3 의 질문 여섯 개를 거친 뒤 확실해진 것만 묶는다.
 
 - 확실한 것 :
-  - 고치는 곳은 쇼핑몰 에이전트가 이름표(`service.instance.id`)를 정하는 **한 군데**다. 수집기 · 적재 처리기 · ClickHouse 는 그 값을 따라간다
+  - 고치는 곳은 쇼핑몰 에이전트가 이름표(`service.instance.id`)를 정하는 **한 군데**다. Collector · Ingester · ClickHouse 는 그 값을 따라간다
   - 이름표를 주는 길은 `-D`(Dockerfile) · 환경변수(k8s 는 Downward API, compose 는 `environment`) · `agent.properties` 셋이고, 한 곳만 주면 된다
   - `agent.properties` 는 네 서비스 · 모든 파드가 같은 내용이라 이름표 자리로 못 쓴다
   - 환경변수로 주면 `agent.properties` 의 `deployment.environment.name=local` 이 사라진다
@@ -205,7 +207,7 @@ A 는 "값은 배포하는 쪽이 정한다" 는 구조다. 이미지는 그대�
 
 B 는 이미지가 알아서 이름을 찾는다. 하지만 지금 `ENTRYPOINT` 는 셸을 거치지 않는 배열 형식이라 `$(hostname)` 같은 것을 못 쓴다. 셸로 감싸면 `exec` 를 빠뜨렸을 때 종료 신호가 java 까지 가지 않는 문제가 생긴다. 그리고 `-D` 는 가장 세서 배포 쪽에서 다른 이름을 주고 싶을 때 이길 수 없다.
 
-C 는 가장 짧다. 이름표를 아예 비워 두면 적재 처리기가 2 · 3순위로 내려가 `host.name` 을 쓰고, k8s 파드의 hostname 은 기본이 파드 이름이라 결과가 A 와 거의 같다. 다만 표준 자리를 비우고 백엔드의 대비책에 기대는 것이라, 나중에 수집기나 다른 도구가 `service.instance.id` 를 보는 순간 어긋난다. compose 는 hostname 을 정해 주지 않으면 컨테이너 ID 라 다시 만들 때마다 바뀐다.
+C 는 가장 짧다. 이름표를 아예 비워 두면 Ingester 가 2 · 3순위로 내려가 `host.name` 을 쓰고, k8s 파드의 hostname 은 기본이 파드 이름이라 결과가 A 와 거의 같다. 다만 표준 자리를 비우고 백엔드의 대비책에 기대는 것이라, 나중에 Collector 나 다른 도구가 `service.instance.id` 를 보는 순간 어긋난다. compose 는 hostname 을 정해 주지 않으면 컨테이너 ID 라 다시 만들 때마다 바뀐다.
 
 D 는 지금 범위 밖이다. 쇼핑몰은 에이전트를 이미지에 직접 넣었고(`#12`), Operator 를 쓰면 같은 일을 두 곳이 하게 된다.
 
@@ -245,7 +247,7 @@ D 는 지금 범위 밖이다. 쇼핑몰은 에이전트를 이미지에 직접 
 | 확인 | 결과 |
 |---|---|
 | 에이전트 2.31.1 jar 안의 UUID provider | `inst/io/opentelemetry/sdk/extension/incubator/resources/ServiceInstanceIdResourceProvider.classdata` |
-| 적재 처리기의 식별자 순서 | backend `ingester/.../transform/OtlpValues.kt`, 테스트 `SpanTranslatorTest` "service.instance.id 와 k8s.pod.name 이 다 있으면 표준인 service.instance.id 를 먼저 쓴다" |
+| Ingester 의 식별자 순서 | backend `ingester/.../transform/OtlpValues.kt`, 테스트 `SpanTranslatorTest` "service.instance.id 와 k8s.pod.name 이 다 있으면 표준인 service.instance.id 를 먼저 쓴다" |
 | 지금 Dockerfile `ENTRYPOINT` | 배열 형식(셸 없음). B 를 고르면 바꿔야 한다 |
 
 ### 확인 못 한 것
@@ -253,7 +255,7 @@ D 는 지금 범위 밖이다. 쇼핑몰은 에이전트를 이미지에 직접 
 - k8s 파드의 hostname 이 정말 파드 이름인지 : k8s 문서(https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)만 봤고 클러스터에서 재현하지 않았다. C 를 고르면 필요한 확인이다
 - Downward API 조각을 실제 클러스터에 넣어 본 적이 없다 (`monimo-deploy` 가 비어 있음)
 - compose 기본 컨테이너 이름 형식(`<프로젝트>-<서비스>-<번호>`)은 블로그 출처뿐이다
-- `host.name` 이 실제로 수집기 · 적재 처리기를 거쳐 `agent_id` 까지 내려가는지는 위 컨테이너 실험(화면 출력)만 봤고 파이프라인으로는 안 봤다
+- `host.name` 이 실제로 Collector · Ingester 를 거쳐 `agent_id` 까지 내려가는지는 위 컨테이너 실험(화면 출력)만 봤고 파이프라인으로는 안 봤다
 
 ## 6. 2차 질문 (사람 차례)
 
@@ -262,7 +264,7 @@ D 는 지금 범위 밖이다. 쇼핑몰은 에이전트를 이미지에 직접 
 - **Q. 세 방식의 장단점은**
   - A. `-D` 는 가장 세고 늘 적용되지만 이미지에 박혀 파드마다 다른 값을 넣으려면 셸이 필요하고 배포 쪽에서 덮을 수 없다. 환경변수는 Downward API 로 파드마다 값을 넣기 쉽고 다시 빌드할 필요가 없지만 `deployment.environment.name` 을 같이 적어야 하고 순서를 틀리면 경고 없이 글자 그대로 들어간다. `agent.properties` 는 공통 기본값 자리로 좋지만 모두가 같은 내용이라 이름표를 못 넣는다.
 - **Q. A 로 간다. 이름 모양은 파드 이름 그대로와 `네임스페이스.파드.컨테이너` 중 무엇이 나은가**
-  - A. 지금은 파드 이름 그대로를 권한다. 표준이 요구하는 것은 "같은 서비스 안에서 유일" 이고, 한 네임스페이스 안의 파드 이름은 쿠버네티스가 이미 유일하게 만든다. 쇼핑몰은 파드 하나에 앱 컨테이너 하나라 컨테이너 이름은 늘 같은 글자가 붙을 뿐이다. 화면에서 읽기도 쉽고(`shop-order-7c9d5f-2xk8p`), 파수꾼 · 화면 가짜 데이터도 이 모양이다. 네임스페이스와 파드 이름은 `k8s.namespace.name` · `k8s.pod.name` 으로 따로 실어 두면 나중에 필요할 때 쓸 수 있다. 되돌리는 조건 : 같은 백엔드로 두 네임스페이스(예: staging · prod)의 쇼핑몰이 같이 들어오게 되면 이름이 겹칠 수 있으니 `네임스페이스.파드` 로 바꾼다.
+  - A. 지금은 파드 이름 그대로를 권한다. 표준이 요구하는 것은 "같은 서비스 안에서 유일" 이고, 한 네임스페이스 안의 파드 이름은 쿠버네티스가 이미 유일하게 만든다. 쇼핑몰은 파드 하나에 앱 컨테이너 하나라 컨테이너 이름은 늘 같은 글자가 붙을 뿐이다. 화면에서 읽기도 쉽고(`shop-order-7c9d5f-2xk8p`), Watchdog · 화면 가짜 데이터도 이 모양이다. 네임스페이스와 파드 이름은 `k8s.namespace.name` · `k8s.pod.name` 으로 따로 실어 두면 나중에 필요할 때 쓸 수 있다. 되돌리는 조건 : 같은 백엔드로 두 네임스페이스(예: staging · prod)의 쇼핑몰이 같이 들어오게 되면 이름이 겹칠 수 있으니 `네임스페이스.파드` 로 바꾼다.
 
 ---
 

@@ -8,7 +8,7 @@ import java.util.logging.Logger;
  * Extension 의 시작점. 에이전트 설치가 끝나면 불린다.
  *
  * <p>이 메서드는 앱 main() 보다 먼저, main 스레드에서 불린다 (#34 research ⑤ 시험 : afterAgent 3번째 줄, 앱 시작 14번째 줄).
- * 여기서 수집기를 기다리면 쇼핑몰 기동이 그만큼 늦어지므로, 데몬 스레드(일꾼) 하나만 띄우고 바로 return 한다.
+ * 여기서 Collector 를 기다리면 쇼핑몰 기동이 그만큼 늦어지므로, 데몬 스레드(일꾼) 하나만 띄우고 바로 return 한다.
  * 데몬이라 쇼핑몰이 꺼질 때 붙잡지 않는다.
  */
 public final class ThreadDumpAgentListener implements AgentListener {

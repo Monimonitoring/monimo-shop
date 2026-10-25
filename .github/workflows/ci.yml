@@ -3,7 +3,7 @@
 #   smoke : compose 로 mysql · redis · pg-stub · payment · inventory · order · gateway 를 이미지부터 빌드해 띄우고 k6 smoke
 #           (Dockerfile · 에이전트 부착 · compose 순서 · API · 재고 조회 · 품절 409 를 한 번에)
 # 이미지는 Phase 1a 라 만들기만 하고 올리지 않는다 (monimo-backend ci.yml 과 같은 정책).
-# 수집기가 없어도 쇼핑몰은 뜨므로 backend 는 받지 않는다 (에이전트는 전송 실패를 로그로만 남긴다).
+# Collector 가 없어도 쇼핑몰은 뜨므로 backend 는 받지 않는다 (에이전트는 전송 실패를 로그로만 남긴다).
 name: ci
 
 on:

@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/stock")
 class StockController(private val service: StockService) {
 
-    /** 손님(k6)이 주문 전에 보는 재고. 게이트웨이가 이리로 넘긴다. 서버맵의 inventory → Redis 화살표가 여기서 나온다 */
+    /** 손님(k6)이 주문 전에 보는 재고. 게이트웨이가 이리로 넘긴다. Service map 의 inventory → Redis 화살표가 여기서 나온다 */
     @GetMapping("/{productId}")
     fun get(@PathVariable productId: String): StockResponse = service.find(productId)
 

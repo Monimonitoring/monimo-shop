@@ -3,7 +3,7 @@ package com.monimo.shop.agentextension
 import io.kotest.core.spec.style.BehaviorSpec
 import io.kotest.matchers.longs.shouldBeBetween
 
-/** 수집기에 안 닿을 때 1 → 2 → 4 … 60초, 무작위 0 ~ 50% 를 더하고, 성공하면 처음으로 */
+/** Collector 에 안 닿을 때 1 → 2 → 4 … 60초, 무작위 0 ~ 50% 를 더하고, 성공하면 처음으로 */
 class BackoffTest : BehaviorSpec({
     Given("백오프") {
         When("연달아 실패하면") {

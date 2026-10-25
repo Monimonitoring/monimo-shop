@@ -23,13 +23,13 @@ kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref 
 kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }
 kotest-extensions-spring = { module = "io.kotest:kotest-extensions-spring", version.ref = "kotest" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
-# 주문 서비스 DB (MySQL + JDBC — 서버맵에 DB 노드가 나오게, Notion 「사용할 라이브러리 정리」 §3). 버전은 Spring Boot BOM 이 정한다
+# 주문 서비스 DB (MySQL + JDBC — Service map 에 DB 노드가 나오게, Notion 「사용할 라이브러리 정리」 §3). 버전은 Spring Boot BOM 이 정한다
 spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
 mysql-connector-j = { module = "com.mysql:mysql-connector-j" }
 # 테스트에서 진짜 MySQL 을 컨테이너로 띄운다 (Testcontainers)
 spring-boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
 testcontainers-mysql = { module = "org.testcontainers:mysql" }
-# 재고 서비스 캐시 (Redis, 클라이언트는 Boot 기본인 Lettuce). 서버맵에 캐시 노드가 나오게 (#32). 버전은 Spring Boot BOM 이 정한다
+# 재고 서비스 캐시 (Redis, 클라이언트는 Boot 기본인 Lettuce). Service map 에 캐시 노드가 나오게 (#32). 버전은 Spring Boot BOM 이 정한다
 spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
 spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache" }
 

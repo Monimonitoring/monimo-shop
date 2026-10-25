@@ -2,7 +2,7 @@
 // 초당 RATE 건의 주문을 DURATION 동안 넣고, 비율만큼 결제 서비스 자체 문제(ERROR_RATE 502 · SLOW_RATE 2초)와
 // 외부 결제사 문제(PG_ERROR_RATE 502 · PG_SLOW_RATE 1.5초), 재고 서비스 문제(INVENTORY_ERROR_RATE 502 · INVENTORY_SLOW_RATE 1.5초),
 // 품절(SOLDOUT_RATE 409)을 섞는다. 콜트리에서 "우리 문제 vs 결제사 문제 vs 재고 문제" 를 구분해 보는 재료다.
-// 주문 전에 재고를 보는 손님(STOCK_LOOKUP_RATE)도 섞는다. 조회가 있어야 서버맵에 inventory → Redis 화살표가 생긴다 (#32).
+// 주문 전에 재고를 보는 손님(STOCK_LOOKUP_RATE)도 섞는다. 조회가 있어야 Service map 에 inventory → Redis 화살표가 생긴다 (#32).
 // 비율은 난수가 아니라 요청 순번으로 정한다. ERROR_RATE=0.3 이면 100건 중 정확히 30건이 502 라서, 알림 규칙 시험 때 대조할 수 있다.
 //
 // 실행 (레포 루트, compose 로 쇼핑몰을 켠 뒤):

@@ -8,7 +8,7 @@ import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestTemplate
 
 /**
- * 더미 외부 결제사(pg-stub) 의 POST /v1/approvals 를 부른다. 서버맵의 "payment → 밖의 결제사" 화살표가 여기서 나온다.
+ * 더미 외부 결제사(pg-stub) 의 POST /v1/approvals 를 부른다. Service map 의 "payment → 밖의 결제사" 화살표가 여기서 나온다.
  * X-Shop-Fault 를 그대로 넘긴다. pg-stub 은 pg-error(503) · pg-slow(1.5초)에만 반응하고 나머지 값은 무시한다.
  */
 @Component

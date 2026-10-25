@@ -2,7 +2,7 @@ package com.monimo.shop.order
 
 import java.time.LocalDateTime
 
-/** POST /api/orders 요청. 파수꾼 카나리 · k6 가 이 모양으로 보낸다. */
+/** POST /api/orders 요청. Watchdog 카나리 · k6 가 이 모양으로 보낸다. */
 data class CreateOrderRequest(
     val productId: String,
     val quantity: Int,
