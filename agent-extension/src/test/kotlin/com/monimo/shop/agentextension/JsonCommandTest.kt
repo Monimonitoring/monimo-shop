@@ -5,7 +5,7 @@ import io.kotest.matchers.shouldBe
 
 /** 라이브러리 없이 쓴 작은 JSON 도우미와 명령 읽기 (Extension 의존성 0개라 직접 만든 부분) */
 class JsonCommandTest : BehaviorSpec({
-    Given("수집기가 준 명령 JSON") {
+    Given("Collector 가 준 명령 JSON") {
         When("필드가 다 있으면") {
             val cmd = Command.parse("""{"command_id":"c-1","type":"THREAD_DUMP","reply_to":"http://collector:8081","timeout_ms":12000}""")
             Then("command_id · type · reply_to · timeout_ms 를 읽는다") {

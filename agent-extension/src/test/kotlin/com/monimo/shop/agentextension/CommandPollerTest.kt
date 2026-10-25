@@ -46,7 +46,7 @@ class CommandPollerTest : BehaviorSpec({
     )
 
     Given("한 번 묻기") {
-        When("수집기가 204(명령 없음)를 주면") {
+        When("Collector 가 204(명령 없음)를 주면") {
             val c = FakeCollector(204)
             val ok = poller(c).pollOnce()
             c.stop()
@@ -56,7 +56,7 @@ class CommandPollerTest : BehaviorSpec({
                 c.received.single().token shouldBe "t0ken"
             }
         }
-        When("수집기가 THREAD_DUMP 명령을 주면") {
+        When("Collector 가 THREAD_DUMP 명령을 주면") {
             val c = FakeCollector(200, "")
             val cmd = """{"command_id":"c-42","type":"THREAD_DUMP","reply_to":"REPLY","timeout_ms":10000}"""
             val c2 = FakeCollector(200, cmd.replace("REPLY", c.url))
@@ -82,19 +82,19 @@ class CommandPollerTest : BehaviorSpec({
                 c.received.count { it.method == "POST" } shouldBe 0
             }
         }
-        When("주소가 수집기가 아닌 곳이라 200 HTML 을 주면") {
+        When("주소가 Collector 가 아닌 곳이라 200 HTML 을 주면") {
             val c = FakeCollector(200, "<html>gateway</html>")
             val ok = poller(c).pollOnce()
             c.stop()
             Then("곧바로 다시 묻지 않고 백오프한다 (고속 루프 방지)") { ok shouldBe false }
         }
-        When("수집기가 409 를 주면 (같은 이름표의 다른 JVM 이 폴링 중)") {
+        When("Collector 가 409 를 주면 (같은 이름표의 다른 JVM 이 폴링 중)") {
             val c = FakeCollector(409)
             val ok = poller(c).pollOnce()
             c.stop()
             Then("백오프한다 (서로 밀어내는 고속 루프 방지)") { ok shouldBe false }
         }
-        When("수집기가 401 을 주면 (토큰 틀림)") {
+        When("Collector 가 401 을 주면 (토큰 틀림)") {
             val c = FakeCollector(401)
             val ok = poller(c).pollOnce()
             c.stop()

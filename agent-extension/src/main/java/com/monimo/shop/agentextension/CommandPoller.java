@@ -99,12 +99,12 @@ final class CommandPoller implements Runnable {
             return true;
         }
         if (response.statusCode() != 200) {
-            log.warning("[monimo] 수집기가 명령 폴링에 " + response.statusCode() + " 로 답했다 (401 이면 토큰 확인)");
+            log.warning("[monimo] Collector 가 명령 폴링에 " + response.statusCode() + " 로 답했다 (401 이면 토큰 확인)");
             return false;
         }
         Command command = Command.parse(response.body());
         if (command == null) {
-            log.warning("[monimo] 명령으로 읽을 수 없는 200 응답 (수집기 주소 확인) : " + abbreviate(response.body()));
+            log.warning("[monimo] 명령으로 읽을 수 없는 200 응답 (Collector 주소 확인) : " + abbreviate(response.body()));
             return false;
         }
         backoff.reset();
