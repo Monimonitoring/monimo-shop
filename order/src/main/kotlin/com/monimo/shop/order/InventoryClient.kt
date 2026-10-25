@@ -10,7 +10,7 @@ import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestTemplate
 
 /**
- * inventory 서비스의 POST /api/stock/deduct · /restore 를 부른다. 서버맵의 order → inventory 화살표가 여기서 나온다.
+ * inventory 서비스의 POST /api/stock/deduct · /restore 를 부른다. Service map 의 order → inventory 화살표가 여기서 나온다.
  * 쇼핑몰 서비스끼리는 코드로 의존하지 않으므로(루트 build.gradle.kts 가드) 요청 모양을 여기서 다시 정의한다.
  */
 @Component

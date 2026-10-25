@@ -1,5 +1,7 @@
 # 2026-10-06 재고 서비스 + Redis 캐시
 
+> 용어만 glossary(`monimo-backend/docs/design/glossary.md`) 기준으로 바꿈 (`#240`) : 원문 인용도 용어만 바꾸고 문장은 그대로 뒀다
+
 - 관련 이슈 : `#32`
 - 쓴 도구 : 웹 리서치 서브에이전트 1개, 로컬 ClickHouse 조회, Boot actuator jar 직접 열기
 - 결과물 : `inventory/` 재고 API(MySQL + Redis 캐시) · `order/` 재고 호출 · 409 · 복원 · `gateway/` 재고 조회 전달 · compose(redis · inventory) · k6 · CI · 문서. 설계 한 장은 [`README.md`](README.md), 표 · Redis 키는 [`tables.md`](tables.md)
@@ -19,7 +21,7 @@
 ```
 조사 질문 (출처 링크 필수. 순서: 공식 문서 → 오픈소스 코드 → 기술 블로그. 링크 못 찾은 주장은 "미확인"으로 표시). 한국어로, 질문 번호별로 짧게.
 
-배경: APM(Pinpoint 비슷한 모니터링) 프로젝트의 "감시 대상" 더미 쇼핑몰이다. Kotlin 2.2 · Spring Boot 3.5 · Java 17. 각 서비스에 OpenTelemetry Java Agent 2.31.1 을 -javaagent 로 붙인다(앱 코드에 계측 없음). 서비스: gateway → order → payment → (외부 결제사 스텁). order 는 MySQL 8.4 를 JdbcTemplate 으로 쓴다. 이번에 inventory(재고) 서비스를 추가해 order 가 결제 전에 재고를 확인·차감하게 하고, inventory 가 MySQL + Redis 를 쓰게 한다. 목적은 진짜 쇼핑몰이 아니라 서버맵에 재고 노드와 캐시(Redis) 노드가 보이고, 장애 주입 시 모니터링 화면에 의미 있는 신호가 나오는 것. 백엔드 서버맵 집계는 CLIENT 스팬에서 peer.service 가 있으면 SERVICE, attributes['db.system'] 이 있으면 DB, 아니면 EXTERNAL 로 분류한다.
+배경: APM(Pinpoint 비슷한 모니터링) 프로젝트의 "감시 대상" 더미 쇼핑몰이다. Kotlin 2.2 · Spring Boot 3.5 · Java 17. 각 서비스에 OpenTelemetry Java Agent 2.31.1 을 -javaagent 로 붙인다(앱 코드에 계측 없음). 서비스: gateway → order → payment → (외부 결제사 스텁). order 는 MySQL 8.4 를 JdbcTemplate 으로 쓴다. 이번에 inventory(재고) 서비스를 추가해 order 가 결제 전에 재고를 확인·차감하게 하고, inventory 가 MySQL + Redis 를 쓰게 한다. 목적은 진짜 쇼핑몰이 아니라 Service map 에 재고 노드와 캐시(Redis) 노드가 보이고, 장애 주입 시 모니터링 화면에 의미 있는 신호가 나오는 것. 백엔드 Service map 집계는 CLIENT 스팬에서 peer.service 가 있으면 SERVICE, attributes['db.system'] 이 있으면 DB, 아니면 EXTERNAL 로 분류한다.
 
 알고 싶은 것:
 1. OTel Java Agent 2.x 가 Spring Data Redis(Lettuce 기본) 호출을 어떻게 계측하나: 스팬 kind, span name, 속성(db.system=redis 인지, 새 시맨틱 컨벤션 db.system.name 으로 바뀌었는지 — 2.x 의 기본 상태와 otel.semconv-stability.opt-in 영향), server.address/port, 명령 인자(db.statement/db.query.text) 기록 여부와 마스킹. Lettuce 버전 지원 범위(Boot 3.5 의 Lettuce 6.x).
@@ -43,7 +45,7 @@
 FOR UPDATE는 커넥션 풀 고갈 문제가 생길 수 있고(Hot Row 문제도 생길 수 있고) 낙관적 락은 너무 많이 동시성 문제가 생기면 재시도 횟수가 많아지니까 문제가되고 Redis 차감은 Redis가 죽으면 주문이 멈추니까 일단 나중에 생각하는 거로 하자
 
 캐시는재고 조회 API만 cache-aside 차감은 DB에서 커밋한 뒤에 캐시를 지우는 방향으로 
-주문만 넣으면 서버맵에 Redis가 안 보이니 k6에 주문 전에 재고 조회하는 손님을 섞는 거로 진행하자
+주문만 넣으면 Service map 에 Redis가 안 보이니 k6에 주문 전에 재고 조회하는 손님을 섞는 거로 진행하자
 
 결제 실패 시 재고 서비스에서 되돌리고 같은 주문으로 두 번 복원되지 않게 주문 번호로 해당 문제를 막자
 결제 후 차감은 동시 주문이면 초과 판매가 나서 환불이 필요하니까 패스(나중에 진행해보는 거로)
@@ -75,7 +77,7 @@ redis 이미지는 redis:7.2로 하고 이름표는 shop-inventory-local-1로 �
 ## 결과 (구현 단계)
 
 - 한 번에 됐나 : 아니오
-- 고쳐 물은 횟수 : 2 (사람이 아니라 관통 시험 1회 · 별도 리뷰 1회가 잡았다)
+- 고쳐 물은 횟수 : 2 (사람이 아니라 E2E 시험 1회 · 별도 리뷰 1회가 잡았다)
 - 무엇이 잘못 나왔나 : Redis 를 멈추고 주문하면 차감이 500 → 주문 502 가 됐다. 캐시를 "커밋 뒤에 지우기" 를 `RedisCacheManager.transactionAware()` 로 했는데, 커밋 뒤 `DEL` 이 실패하자 그 예외가 커밋 호출자까지 올라왔다. `LoggingCacheErrorHandler` 는 `@Cacheable` 같은 애노테이션 경로에만 걸리고 직접 부른 `evict` 에는 안 걸린다
 - 어떻게 고쳤나 : `transactionAware()` 를 빼고 `StockService.evict` 가 커밋 뒤 동기화(`TransactionSynchronization.afterCommit`)를 직접 등록해 실패를 로그로 끝낸다. 다시 시험해 Redis 가 죽어도 주문 201 (0.3초)
 - 리뷰(code-reviewer, REJECT)가 잡은 것 : `GenericJackson2JsonRedisSerializer()` 가 Kotlin data class 를 되읽지 못해 **모든 조회가 미스**였다(오류 처리기가 미스로 돌려 겉으로는 200). `Jackson2JsonRedisSerializer(jacksonObjectMapper(), StockResponse)` 로 바꾸고 되읽기 테스트를 넣었다. 같이 : 게이트웨이 `/api/stock/**` 가 POST 까지 열려 있던 것 → GET 만, 수량 0 이하 → 400, 재고 타임아웃 때도 복원 호출, 문서의 `transactionAware` 잔재
@@ -85,7 +87,7 @@ redis 이미지는 redis:7.2로 하고 이름표는 shop-inventory-local-1로 �
 
 | 칸 | 프롬프트에 | 다른 곳에 |
 |---|---|---|
-| 목표 | 있음 (더미 기준, 서버맵에 재고 · 캐시 노드) | 이슈 `#32` |
+| 목표 | 있음 (더미 기준, Service map 에 재고 · 캐시 노드) | 이슈 `#32` |
 | 배경 | 있음 (각 선택지를 버린 이유) | research 2 · 5 절 |
 | 범위 | 있음 (대규모 방식은 나중) | research 1 절 표 |
 | 제약 | 있음 (peer 매핑에 Redis 금지, 헬스체크 끄기, timeout 500ms) | AGENTS.md §2 |

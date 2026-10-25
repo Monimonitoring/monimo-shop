@@ -26,7 +26,7 @@ Kotlin 2.2 · Java 17 · Spring Boot 3.5 · Gradle 멀티모듈. 버전은 `grad
 | `order/` | 주문. MySQL 에 저장하고 결제를 부른다 | 8091 |
 | `payment/` | 결제. 외부 결제사(pg-stub)를 부른다 | 8092 |
 | `inventory/` | 재고. MySQL(stock) + Redis 조회 캐시 | 8093 |
-| `agent-extension/` | 스레드 덤프 명령 수신 Extension (Java, 의존성 0). 수집기 `/agent/commands` 롱폴링 → 덤프 회신. 우리가 만드는 유일한 에이전트 코드 | — |
+| `agent-extension/` | 스레드 덤프 명령 수신 Extension (Java, 의존성 0). Collector `/agent/commands` 롱폴링 → 덤프 회신. 우리가 만드는 유일한 에이전트 코드 | — |
 | `otel/` | OTel Java Agent 설정(`agent.properties`)과 버전 고정 | — |
 | `k6/` | 부하 · 에러 주입 시나리오 | — |
 | `pg-stub/` | 더미 외부 결제사 (WireMock, 에이전트 없음) | 8099 |
@@ -38,10 +38,10 @@ Kotlin 2.2 · Java 17 · Spring Boot 3.5 · Gradle 멀티모듈. 버전은 `grad
 ## 2. 깨면 안 되는 규칙
 
 - **앱 코드에 계측을 넣지 않는다.** 트레이스 · 메트릭 · 로그는 이미지에 붙인 OTel Java Agent 가 만든다 (ADR `#33`). 스팬을 직접 만드는 코드를 넣으면 "에이전트만 붙이면 된다"는 제품 전제가 깨진다.
-- **서비스 이름은 `shop-gateway` · `shop-order` · `shop-payment` · `shop-inventory`.** 적재 처리기가 이 이름을 `applications.name` 과 정확히 비교한다 (backend `#83`). 바꾸면 서버맵 화살표가 끊긴다.
+- **서비스 이름은 `shop-gateway` · `shop-order` · `shop-payment` · `shop-inventory`.** Ingester 가 이 이름을 `applications.name` 과 정확히 비교한다 (backend `#83`). 바꾸면 Service map 화살표가 끊긴다.
 - **서비스를 추가하면 `OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING` 에 짝을 더한다.** 빠뜨리면 상대가 외부 시스템으로 잡힌다. `pg-stub` 은 넣지 않는다 (진짜 외부로 보여야 한다).
 - **`X-Shop-Fault` 의 이름과 값은 k6 와의 약속이다.** 바꾸면 `k6/` 도 같은 PR 에서 바꾼다.
-- **API 모양은 파수꾼 카나리와 k6 가 그대로 쓴다.** 경로 · 응답을 바꾸면 `monimo-watchdog` 담당(재범)에게 알린다.
+- **API 모양은 Watchdog 카나리와 k6 가 그대로 쓴다.** 경로 · 응답을 바꾸면 `monimo-watchdog` 담당(재범)에게 알린다.
 - **에이전트 버전은 `otel/AGENT_VERSION` 한 곳.** Dockerfile 에 버전을 직접 적지 않는다.
 - **비밀값은 레포에 올리지 않는다.** `.env.example` 에 이름만 둔다. 레포는 퍼블릭이다.
 
@@ -66,29 +66,30 @@ CI 는 **build**(Gradle 컴파일 + 테스트) → **smoke**(compose 로 띄운 
 - OTel Java Agent 설정 — gRPC · `collector:4317` · 샘플러 always_on · 버전 2.31.1 (`#4`)
 - Gradle 멀티모듈 뼈대 5개 모듈 (`#6`)
 - 결제 승인 골격과 `X-Shop-Fault` 에러 · 지연 주입 (`#8` 1단계), 주문 API 와 MySQL 저장 · 결제 호출 (`#8` 3단계), 컨트롤러 테스트 6건 (`#8` 5·6단계)
-- order · payment Dockerfile 에 에이전트 부착 (`#12`), `docker-compose.dev.yml` 로 한 번에 실행하고 `monimo-dev` 네트워크로 수집기 연결 (`#14`)
+- order · payment Dockerfile 에 에이전트 부착 (`#12`), `docker-compose.dev.yml` 로 한 번에 실행하고 `monimo-dev` 네트워크로 Collector 연결 (`#14`)
 - k6 주문 부하 + 에러 · 지연 주입 시나리오 (`#16`), PR 마다 build + smoke CI (`#18`)
 - 더미 외부 결제사 pg-stub 호출과 `pg-error` · `pg-slow` 주입 (`#20`)
-- 서버맵에서 order → payment 가 외부로 잡히던 문제를 peer-service-mapping 으로 해결 (`#23`)
+- Service map 에서 order → payment 가 외부로 잡히던 문제를 peer-service-mapping 으로 해결 (`#23`)
 - 얇은 게이트웨이. 진입 주소를 8090 으로 (`#25`)
 - 에이전트 이름표 `service.instance.id` 를 환경변수로 고정. compose 는 `shop-<서비스>-local-1`, 쿠버네티스는 Downward API 로 파드 이름 (`#30`). 재시작해도 `agent_id` 가 그대로다
-- 스레드 덤프 Extension 첫 검증 (`#34`, backend `#122`). Java Extension 이 수집기에 롱폴링으로 명령을 받아 jstack 모양 덤프를 회신. 네 서비스 모두 덤프 200, Extension 호출 스팬 0건, 수집기 재시작 4~5초 뒤 재연결, 별도 리뷰 MEDIUM 4건 반영
+- 스레드 덤프 Extension 첫 검증 (`#34`, backend `#122`). Java Extension 이 Collector 에 롱폴링으로 명령을 받아 jstack 모양 덤프를 회신. 네 서비스 모두 덤프 200, Extension 호출 스팬 0건, Collector 재시작 4~5초 뒤 재연결, 별도 리뷰 MEDIUM 4건 반영
 - 이미지 빌드를 가볍게 (`#42`). 서비스마다 있던 Dockerfile 4개를 루트 `Dockerfile` 하나(멀티스테이지 · 서비스별 target)로, Gradle 캐시 마운트, `.dockerignore` 에 `docs` · `perf` · `*.md`. 캐시 없이 97 → 40초(도커 CPU 최고 918 → 662%), 코드 한 줄 뒤 약 94 → 8초, 문서만 바뀌면 94 → 1초
 - 에이전트 오버헤드 측정 (`#36`). 같은 이미지 · 고정 부하로 붙임 · 뗌 5회씩 번갈아(CPU 1개 · 1GB 제한). CPU 상대 +10 ~ +39%(1코어 대비 +0.6 ~ +3.6%p, 주문 1건당 +2.9 ~ +4.3ms), 메모리 +80 ~ +141MB 로 요구사항(3% · 100MB) 못 지킴. 메모리 절반은 힙 아닌 쪽(에이전트 클래스 약 5,000개 · JIT 코드, 고정), 샘플링 10% 는 효과 없고 메트릭 끄기가 에이전트 추가 CPU 의 약 5분의 1 로 보임(3회, 확정 아님). 스크립트 `perf/overhead/`, 결과 `docs/seungjo/36-agent-overhead/results.md` 요구사항은 팀 결정으로 실측에 맞게 고침(backend `#132` · ADR `#56`, `#38`)
-- 재고 서비스 + Redis 캐시 (`#32`). 주문이 결제 전에 재고를 조건부 UPDATE 로 차감하고 모자라면 409, 결제 실패면 복원(주문 번호로 한 번만). 조회만 cache-aside, Redis 헬스체크는 끔(고아 스팬), timeout 500ms + DB 폴백. k6 에 재고 조회 손님 · inventory-slow · inventory-error · 품절 추가
-- 에이전트 mTLS (`#40`, backend `#159` · ADR `#64`). 수집기가 손님 신분증을 요구할 때 네 서비스가 자기 이름의 신분증을 내도록 compose 에 OTel 인증서 환경변수 셋과 `/certs` 마운트. `.env` 의 `MONIMO_OTLP_CERTS_DIR` 이 비어 있으면(기본) 평문 그대로. 자바 코드 0줄
+- 재고 서비스 + Redis 캐시 (`#32`). 주문이 결제 전에 재고를 조건부 UPDATE 로 차감하고 모자라면 409, 결제 실패면 복원(주문 번호로 한 번만). 조회만 cache-aside, Redis 헬스체크는 끔(orphan span), timeout 500ms + DB 폴백. k6 에 재고 조회 손님 · inventory-slow · inventory-error · 품절 추가
+- 에이전트 mTLS (`#40`, backend `#159` · ADR `#64`). Collector 가 손님 신분증을 요구할 때 네 서비스가 자기 이름의 신분증을 내도록 compose 에 OTel 인증서 환경변수 셋과 `/certs` 마운트. `.env` 의 `MONIMO_OTLP_CERTS_DIR` 이 비어 있으면(기본) 평문 그대로. 자바 코드 0줄
 - `AGENTS.md` · `CLAUDE.md`, README 「AI 와 일한 방법」 절, `docs/prompts/`(프롬프트 로그 : 코드와 같은 PR 에). 하네스 정본은 backend `docs/seungjo/harness.md` 한 곳
+- 2026-10-26 문서 · 주석의 우리말 조어를 현업 이름으로 바꿨다 (backend `#240` · ADR `#73`). 코드 안 문자열(테스트 이름 · 스크립트 출력)은 backend `#241`
 
 ## 6. 지금 막혀 있는 것
 
 | 무엇 | 안 풀면 |
 |---|---|
-| 에이전트는 2.x 에 머문다 (3.0 은 올리지 않기로 함, `#47`) | 막힌 것은 아니다. 3.0 은 DB 호출 꼬리표를 `db.system` 에서 `db.system.name` 으로 바꾸는데 backend `mv_server_map_1m` 은 `db.system` 만 봐서, 올리면 MySQL · Redis 가 서버맵에서 외부로 잘못 그려진다. **올리게 되면 먼저** 수집 쪽 집계가 두 키를 다 보게 한다 (`#32` research 2.2) |
-| 스레드 덤프 API 서버 팬아웃 · 화면 · CH 저장이 없다 | 수집기 `POST /internal/thread-dump` 까지만 있다. API 서버 팬아웃(`agentUuid` → service · instance, 503 재시도)은 재범, CH `thread_dumps` 저장(Q16)은 조회 쪽. 그 전까지는 curl 로만 뜬다 |
+| 에이전트는 2.x 에 머문다 (3.0 은 올리지 않기로 함, `#47`) | 막힌 것은 아니다. 3.0 은 DB 호출 Attribute 를 `db.system` 에서 `db.system.name` 으로 바꾸는데 backend `mv_server_map_1m` 은 `db.system` 만 봐서, 올리면 MySQL · Redis 가 Service map 에서 외부로 잘못 그려진다. **올리게 되면 먼저** 수집 쪽 집계가 두 키를 다 보게 한다 (`#32` research 2.2) |
+| 스레드 덤프 API server 팬아웃 · 화면 · CH 저장이 없다 | Collector `POST /internal/thread-dump` 까지만 있다. API server 팬아웃(`agentUuid` → service · instance, 503 재시도)은 재범, CH `thread_dumps` 저장(Q16)은 조회 쪽. 그 전까지는 curl 로만 뜬다 |
 | 에이전트 오버헤드 기준이 빠듯하다 | 요구사항을 실측에 맞게 고쳤다(backend ADR `#56` : 파드당 CPU 1개 · 초당 주문 20건에서 1코어 대비 +3%p, 메모리 150MB). 지금 값은 통과(+1.4 ~ +2.1%p, 최대 141MB)지만 초당 40건이면 order · inventory 가 +3.5 · +3.6%p 로 넘고 메모리 여유는 9MB 다. 실제 파드 부하가 정해지거나 에이전트 버전을 올리면 `perf/overhead/` 로 다시 잰다 (`#36`) |
-| Redis 연결을 맺을 때 부모 없는 스팬 3개(`HELLO` · `CLIENT SETINFO` ×2)가 남는다 (의도적으로 둠, `#47`) | Lettuce(Redis 드라이버)가 연결을 맺으며 보내는 인사라 감쌀 요청(SERVER 스팬)이 없다. 앱 시작 · 재연결 때만 3개씩이라 그대로 둔다. 헬스체크 `INFO` 고아는 `#32` 에서 재고 서비스의 Redis 헬스체크를 꺼서 없앴다 : 캐시 하나 때문에 재고 서비스 probe 가 실패하지 않게 하려는 것도 같은 이유다. Redis 상태는 Redis 자신의 probe(`redis-cli ping`)와 APM 서버맵(inventory → Redis 간선 에러)으로 본다 |
+| Redis 연결을 맺을 때 부모 없는 스팬 3개(`HELLO` · `CLIENT SETINFO` ×2)가 남는다 (의도적으로 둠, `#47`) | Lettuce(Redis 드라이버)가 연결을 맺으며 보내는 인사라 감쌀 요청(SERVER 스팬)이 없다. 앱 시작 · 재연결 때만 3개씩이라 그대로 둔다. 헬스체크 `INFO` 고아는 `#32` 에서 재고 서비스의 Redis 헬스체크를 꺼서 없앴다 : 캐시 하나 때문에 재고 서비스 probe 가 실패하지 않게 하려는 것도 같은 이유다. Redis 상태는 Redis 자신의 probe(`redis-cli ping`)와 APM Service map(inventory → Redis 간선 에러)으로 본다 |
 
 ## 7. 참고
 
 - 설계 문서: https://github.com/2026-techeer-project-team-b/monimo-backend/tree/HEAD/docs/design
-- 수집기까지 데이터를 보내려면 `monimo-backend` 에서 `docker compose --profile collector up -d --wait`
+- Collector 까지 데이터를 보내려면 `monimo-backend` 에서 `docker compose --profile collector up -d --wait`

@@ -1,7 +1,7 @@
 # `#36` 에이전트 오버헤드 측정 결과
 
 - 측정 2026-10-09 / 승조(`@SeungJo-02`) / 방법 [`perf/overhead/`](../../../perf/overhead/README.md) / 원자료 [`results.csv`](results.csv) (회차 × 서비스 176줄)
-- 대상 : 쇼핑몰 네 서비스(gateway · order · payment · inventory), OTel Java Agent 2.31.1 + 스레드 덤프 Extension, `otel/agent.properties` 그대로(샘플러 `always_on`, 메트릭 10초, 로그 보내기 켬). 수집기 monimo-dev 로 실제 전송
+- 대상 : 쇼핑몰 네 서비스(gateway · order · payment · inventory), OTel Java Agent 2.31.1 + 스레드 덤프 Extension, `otel/agent.properties` 그대로(샘플러 `always_on`, 메트릭 10초, 로그 보내기 켬). Collector monimo-dev 로 실제 전송
 - 조건 : 맥북(도커 10코어 · 16GB), 서비스마다 **CPU 1개 · 메모리 1GB 제한**, 힙 고정 안 함. 회차마다 `up --wait` → k6 40초 워밍업(버림) → 약 60초 측정(k6 컨테이너 기동 1 ~ 3초 포함, %p 는 60초로 나눔) → `down`. MySQL 볼륨은 회차 사이에 지우지 않아 주문 표가 쌓인다(번갈아 돌려 한쪽에 몰리지 않게 했다). 뗀 쪽은 `-javaagent` 를 아예 뺐다
 - 반복 : 초당 10 · 20 · 40건 붙임 · 뗌 **5회씩 번갈아**, 부하 0 3회씩, 원인 찾기 변형 3회씩, NMT 1회씩. 표는 전부 중앙값. k6 check 실패 **0건**
 
@@ -65,7 +65,7 @@
 - 메트릭 끄기는 **에이전트가 더 쓰는 CPU 의 약 5분의 1** 쯤으로 보인다(범위가 일부 겹쳐 확정은 아님). HTTP · DB 지연 히스토그램은 샘플링과 상관없이 모든 요청에 기록되니 앞뒤가 맞는다
 - 나머지 대부분은 **요청마다 계측 코드가 도는 일 자체**(컨텍스트 전파, 헤더 주입, 스팬 시작 · 끝)로 본다. 샘플링을 낮춰도 이 일은 그대로라 안 줄어든다(파일럿)
 - 쓰는 계측만 켜기는 CPU 차이가 흔들림 안이다(order 는 오히려 7.69초 → 7.83초). **메모리는 10 ~ 20MB 준다**(네 서비스 모두). 그래도 inventory 는 100MB 를 넘는다
-- `instr-min` 으로도 서버맵 · 트레이스 모양(SERVER · HTTP · DB · Redis 스팬)은 그대로 나왔다(짧은 확인 1회). 단 hikaricp 커넥션 풀 메트릭(`db.client.connections.*`)과 로그 MDC 의 trace_id 주입(logback-mdc) 같은 것은 빠진다
+- `instr-min` 으로도 Service map · 트레이스 모양(SERVER · HTTP · DB · Redis 스팬)은 그대로 나왔다(짧은 확인 1회). 단 hikaricp 커넥션 풀 메트릭(`db.client.connections.*`)과 로그 MDC 의 trace_id 주입(logback-mdc) 같은 것은 빠진다
 
 ## 요구사항 문장 제안 (backend `docs/design/10-requirements.md`)
 
@@ -88,7 +88,7 @@
 
 ## 이번에 안 한 것
 
-- 설정 변경(메트릭 끄기 · 계측 줄이기 · 메트릭 간격) : 다음 이슈. 화면 · 서버맵에 영향을 같이 봐야 한다
+- 설정 변경(메트릭 끄기 · 계측 줄이기 · 메트릭 간격) : 다음 이슈. 화면 · Service map 에 영향을 같이 봐야 한다
 - k8s 실제 파드에서 재기 : 매니페스트가 생기면 같은 스크립트를 파드 limit 조건으로
 - 시작 시간 : 목표에 없어 재지 않았다(공식 벤치 +3.6초, research 2.6)
 

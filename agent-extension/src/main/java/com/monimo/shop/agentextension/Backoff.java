@@ -3,8 +3,8 @@ package com.monimo.shop.agentextension;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 수집기에 닿지 않을 때 다시 묻기까지 쉬는 시간. 1 → 2 → 4 … 60초까지 두 배씩, 성공하면 처음으로.
- * 쇼핑몰이 여러 대면 수집기가 다시 떴을 때 한꺼번에 몰리지 않게 0 ~ 50% 를 무작위로 더한다 (합의안 3).
+ * Collector 에 닿지 않을 때 다시 묻기까지 쉬는 시간. 1 → 2 → 4 … 60초까지 두 배씩, 성공하면 처음으로.
+ * 쇼핑몰이 여러 대면 Collector 가 다시 떴을 때 한꺼번에 몰리지 않게 0 ~ 50% 를 무작위로 더한다 (합의안 3).
  */
 final class Backoff {
 

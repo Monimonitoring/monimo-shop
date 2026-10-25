@@ -5,7 +5,7 @@ package com.monimo.shop.agentextension;
  *
  * <p>설정은 에이전트 설정 체계를 그대로 탄다 : -D > 환경변수 > agent.properties (#30 과 같은 규칙).
  * <ul>
- *   <li>otel.monimo.collector.url (OTEL_MONIMO_COLLECTOR_URL) : 수집기 HTTP 주소. 기본 http://collector:8081
+ *   <li>otel.monimo.collector.url (OTEL_MONIMO_COLLECTOR_URL) : Collector HTTP 주소. 기본 http://collector:8081
  *       (OTLP 를 받는 4317 이 아니라 Spring MVC 쪽 포트다)
  *   <li>otel.monimo.agent.token (OTEL_MONIMO_AGENT_TOKEN) : 에이전트 전용 토큰. 비면 Extension 이 아무것도 안 한다
  * </ul>

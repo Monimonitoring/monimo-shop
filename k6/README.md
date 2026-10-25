@@ -24,7 +24,7 @@ docker run --rm --network monimo-dev -v "$PWD/k6:/scripts" -e BASE_URL=http://ga
 | 재고 서비스 장애 | `-e INVENTORY_ERROR_RATE=0.3 -e DURATION=2m` | 1,200건 중 360건 502 (재고 500 이 원인, 결제는 안 부른다) |
 | 재고 서비스 지연 | `-e INVENTORY_SLOW_RATE=0.2 -e DURATION=2m` | 1,200건 중 240건 1.5초 이상 |
 | 품절 (4xx 비율 규칙) | `-e SOLDOUT_RATE=0.3 -e DURATION=2m` | 1,200건 중 360건 409 (재고 0 인 `P-SOLDOUT` 주문) |
-| 재고 조회 끄기 | `-e STOCK_LOOKUP_RATE=0` | 주문만. 서버맵에 inventory → Redis 화살표가 안 생긴다 |
+| 재고 조회 끄기 | `-e STOCK_LOOKUP_RATE=0` | 주문만. Service map 에 inventory → Redis 화살표가 안 생긴다 |
 
 로컬에 k6 가 있으면 `k6 run -e RATE=1 -e DURATION=10s k6/order.js` 도 된다(기본 주소는 게이트웨이 `http://localhost:8090`).
 
@@ -52,4 +52,4 @@ docker run --rm --network monimo-dev -v "$PWD/k6:/scripts" -e BASE_URL=http://ga
 - **요청 수는 1건 더 나올 수 있다.** k6 가 실행 시간이 끝나는 경계에서 1건을 더 넣는다(초당 5건 · 20초 → 101건). 101번째는 순번 100 이라 다시 앞쪽(에러 구간)에 들어가서, 그때 502 는 30건이 아니라 31건이다.
 - **checks 가 100% 가 아니면 실패로 끝난다.** 에러 주입 요청이 502 인 것은 "기대한 결과"라 통과다. 정상 요청이 502 거나 지연이 2초 안 되면 실패다.
 - **요청마다 `fault` 태그가 붙는다.** 결과 요약에서 `none` · `payment-error` · `payment-slow` 별로 볼 수 있다.
-- 데이터를 수집기까지 보내려면 monimo-backend 에서 `docker compose --profile collector up -d --wait` 를 같이 켠다.
+- 데이터를 Collector 까지 보내려면 monimo-backend 에서 `docker compose --profile collector up -d --wait` 를 같이 켠다.

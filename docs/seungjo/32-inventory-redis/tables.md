@@ -30,9 +30,9 @@
 - **와일드카드(`KEYS stock::*`)를 쓰지 않는다.** 지울 때는 상품 번호를 알고 있어서 `DEL stock::P-100` 한 건이면 된다. `KEYS` 는 키가 많아지면 Redis 를 멈추게 하는 명령이라 프로덕션에서 금기다
 - **값이 JSON 인 이유** : 기본은 JDK 직렬화라 `redis-cli` 로 읽을 수 없다. `Jackson2JsonRedisSerializer(jacksonObjectMapper(), StockResponse)` 로 바꿔 `redis-cli GET stock::P-100` 이 사람 눈에 읽히게 했다. 캐시가 하나뿐이라 타입을 고정했고, Kotlin 모듈이 든 ObjectMapper 여야 data class 를 되읽는다(처음엔 `GenericJackson2JsonRedisSerializer()` 를 썼다가 리뷰에서 "되읽지 못해 모든 조회가 미스" 가 잡혔다. `CacheConfigTest` 가 이걸 고정한다)
 - **TTL 30초** : 차감 뒤 `DEL` 을 놓쳐도(예 : 복원 호출이 inventory 안에서 실패) 30초면 다시 MySQL 을 읽는다. 재고는 자주 바뀌니 길게 두지 않는다
-- **지우는 시점은 커밋 뒤** : `StockService.evict` 가 `TransactionSynchronization.afterCommit` 에 등록한다. 커밋 전에 지우면 그 틈에 다른 조회가 옛 값을 다시 넣는다. `RedisCacheManager.transactionAware()` 는 쓰지 않는다 : 커밋 뒤 `DEL` 이 실패하면 예외가 커밋 호출자까지 올라와 차감 성공이 500 이 됐다(관통 시험에서 잡힘)
+- **지우는 시점은 커밋 뒤** : `StockService.evict` 가 `TransactionSynchronization.afterCommit` 에 등록한다. 커밋 전에 지우면 그 틈에 다른 조회가 옛 값을 다시 넣는다. `RedisCacheManager.transactionAware()` 는 쓰지 않는다 : 커밋 뒤 `DEL` 이 실패하면 예외가 커밋 호출자까지 올라와 차감 성공이 500 이 됐다(E2E 시험에서 잡힘)
 
-### 에이전트가 남기는 스팬 (서버맵 재료)
+### 에이전트가 남기는 스팬 (Service map 재료)
 
 | 언제 | Redis 명령 | 스팬 |
 |---|---|---|
@@ -41,7 +41,7 @@
 | 차감 · 복원 커밋 뒤 | `DEL stock::P-100` | `DEL` |
 | 연결을 맺을 때 (앱 시작 · 재연결) | `HELLO 3` · `CLIENT SETINFO` ×2 | 부모 없는 CLIENT 세 개 (research ⑤). 양이 작아 받아들인다 |
 
-서버맵 집계는 `db.system` 이 있으면 DB 로 가르므로 `inventory → redis:6379` 가 MySQL 과 같은 DB 칸에 그려진다. 헬스체크의 `INFO` 는 `management.health.redis.enabled=false` 로 없앴다.
+Service map 집계는 `db.system` 이 있으면 DB 로 가르므로 `inventory → redis:6379` 가 MySQL 과 같은 DB 칸에 그려진다. 헬스체크의 `INFO` 는 `management.health.redis.enabled=false` 로 없앴다.
 
 ### 고장 나면
 

@@ -10,8 +10,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * 가짜 수집기(JDK HttpServer)를 세워 한 번 묻기(pollOnce)가 응답 코드마다 맞게 움직이는지 본다.
- * 에이전트 없이 돌므로 suppressInstrumentation 은 아무 일도 안 한다 (스팬 0건은 compose 관통 시험에서 본다).
+ * 가짜 Collector(JDK HttpServer)를 세워 한 번 묻기(pollOnce)가 응답 코드마다 맞게 움직이는지 본다.
+ * 에이전트 없이 돌므로 suppressInstrumentation 은 아무 일도 안 한다 (스팬 0건은 compose E2E 시험에서 본다).
  */
 class CommandPollerTest : BehaviorSpec({
     data class Received(val method: String, val path: String, val token: String?, val body: String)

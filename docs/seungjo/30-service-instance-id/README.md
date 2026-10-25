@@ -4,11 +4,11 @@
 > 하네스 규칙과 틀은 backend [`docs/seungjo/`](https://github.com/2026-techeer-project-team-b/monimo-backend/blob/HEAD/docs/seungjo/README.md) 가 정본이다. 이 이슈는 쇼핑몰 레포에서 한 작업이라 코드와 같은 PR 에 둔다.
 
 - 2026-10-06 / 승조(`@SeungJo-02`) / ADR 없음 (설정 한 줄 결정이라 research ⑧ 원문이 결정 기록) / 이슈 `#30`
-- 유저 플로우에서 어디 : **에이전트**(쇼핑몰 안)가 이름표를 정하는 자리. 수집기 → Kafka → 적재 처리기 → ClickHouse 는 그 값을 `agent_id` 로 따라간다
+- 유저 플로우에서 어디 : **에이전트**(쇼핑몰 안)가 이름표를 정하는 자리. Collector → Kafka → Ingester → ClickHouse 는 그 값을 `agent_id` 로 따라간다
 
 ## 문제
 
-에이전트는 이름표(`service.instance.id`)를 안 주면 JVM 이 뜰 때마다 랜덤 UUID 를 만든다(OTel SDK `ServiceInstanceIdResourceProvider`, 에이전트 2.31.1 은 incubator 판). 백엔드 적재 처리기는 이 값을 `agent_id` 로 쓰므로(backend `#58`), 재시작 한 번마다 옛 에이전트가 사라지고 새 에이전트가 붙은 것처럼 보인다.
+에이전트는 이름표(`service.instance.id`)를 안 주면 JVM 이 뜰 때마다 랜덤 UUID 를 만든다(OTel SDK `ServiceInstanceIdResourceProvider`, 에이전트 2.31.1 은 incubator 판). 백엔드 Ingester 는 이 값을 `agent_id` 로 쓰므로(backend `#58`), 재시작 한 번마다 옛 에이전트가 사라지고 새 에이전트가 붙은 것처럼 보인다.
 
 | 재 본 것 | 값 |
 |---|---|
@@ -49,7 +49,7 @@
 ## 어떻게 확인했나
 
 - 빌드 : `./gradlew build` 통과 (코드 변경 없음, 회귀 확인)
-- 관통 : compose 로 띄워 주문 3건 → order 재시작 → 3건 → 재시작 → 3건. order JVM 기동 3번, ClickHouse 에서 `agent_id` 는 서비스마다 하나 (spans : gateway 18 · order 38 · payment 18, metrics_raw : 186 · 240 · 248, 전부 `shop-<서비스>-local-1`)
+- E2E : compose 로 띄워 주문 3건 → order 재시작 → 3건 → 재시작 → 3건. order JVM 기동 3번, ClickHouse 에서 `agent_id` 는 서비스마다 하나 (spans : gateway 18 · order 38 · payment 18, metrics_raw : 186 · 240 · 248, 전부 `shop-<서비스>-local-1`)
 - 일부러 깨뜨려 본 것 : 환경변수에 이름표만 넣으면 `deployment.environment.name` 이 사라지는 것, 아무것도 안 주면 재시작에 UUID 가 바뀌는 것 (payment 컨테이너 `logging-otlp` 출력으로)
 - 쿠버네티스 : 클러스터가 없어 Downward API 조각은 **시험하지 않았다** (`monimo-deploy` 가 비어 있음)
 - CI : PR 에서 build · smoke

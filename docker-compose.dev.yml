@@ -5,8 +5,8 @@
 #   docker compose -f docker-compose.dev.yml down                  # 끄기 (주문 · 재고 데이터는 볼륨에 남음, 지우려면 down -v)
 #
 # 값은 .env 로 바꾼다 (.env.example 참고). 비워 두면 아래 ${이름:-기본값} 의 기본값을 쓴다.
-# 에이전트는 이미지에 들어 있어 collector:4317 로 보낸다. 수집기는 monimo-backend 에서 --profile collector 로 켠다.
-# 수집기가 꺼져 있어도 쇼핑몰은 정상으로 뜬다 (에이전트는 전송 실패를 로그로만 남긴다).
+# 에이전트는 이미지에 들어 있어 collector:4317 로 보낸다. Collector 는 monimo-backend 에서 --profile collector 로 켠다.
+# Collector 가 꺼져 있어도 쇼핑몰은 정상으로 뜬다 (에이전트는 전송 실패를 로그로만 남긴다).
 name: monimo-shop
 
 # 공용 네트워크 monimo-dev (개발환경 6단계 연결 약속). backend compose 가 같은 이름으로 쓴다.
@@ -47,7 +47,7 @@ services:
       retries: 30
       start_period: 5s
 
-  # 더미 외부 결제사. 진짜 외부 시스템처럼 에이전트를 붙이지 않는다 (서버맵에서 "밖으로 나가는 호출" 노드로 보이게).
+  # 더미 외부 결제사. 진짜 외부 시스템처럼 에이전트를 붙이지 않는다 (Service map 에서 "밖으로 나가는 호출" 노드로 보이게).
   # 응답 정의는 pg-stub/mappings/ 의 JSON (pg-stub/README.md)
   pg-stub:
     image: wiremock/wiremock:3.13.2
@@ -71,14 +71,14 @@ services:
     ports:
       - "${PAYMENT_PORT:-8092}:8092"
     environment:
-      # 수집기 주소는 agent.properties 의 http://collector:4317 이다. 여기 OTEL_EXPORTER_OTLP_ENDPOINT 를 두지 않는다 (아래 env_file 설명)
+      # Collector 주소는 agent.properties 의 http://collector:4317 이다. 여기 OTEL_EXPORTER_OTLP_ENDPOINT 를 두지 않는다 (아래 env_file 설명)
       # PG_BASE_URL=http://pg-stub:8080 은 이미지 기본값이라 적지 않는다 (서비스 이름과 같다)
       # 에이전트 이름표(service.instance.id). 안 주면 에이전트가 뜰 때마다 랜덤 UUID 를 만들어 재시작할 때마다 새 에이전트처럼 보인다(#30).
       # 백엔드는 이 값을 agent_id 로 쓴다. K8s 에서는 Downward API 로 파드 이름을 넣고(README), compose 엔 파드가 없어 이름을 직접 적는다.
       # agent.properties 의 같은 키를 통째로 덮으므로 deployment.environment.name=local 도 같이 적는다
       OTEL_RESOURCE_ATTRIBUTES: "service.instance.id=shop-payment-local-1,deployment.environment.name=local"
-      # 스레드 덤프 Extension 이 수집기(collector:8081, OTLP 4317 이 아니라 HTTP 쪽)에 명령을 받으러 갈 때 붙이는 토큰 (#34).
-      # 수집기의 MONIMO_AGENT_TOKEN 과 같아야 한다. 로컬 전용 값이다. :- 라서 .env 에 빈 값을 넣어도 기본값이 되살아난다
+      # 스레드 덤프 Extension 이 Collector(collector:8081, OTLP 4317 이 아니라 HTTP 쪽)에 명령을 받으러 갈 때 붙이는 토큰 (#34).
+      # Collector 의 MONIMO_AGENT_TOKEN 과 같아야 한다. 로컬 전용 값이다. :- 라서 .env 에 빈 값을 넣어도 기본값이 되살아난다
       # (Extension 은 토큰이 비면 꺼지지만, 끄려면 이 줄을 직접 비워야 한다)
       OTEL_MONIMO_AGENT_TOKEN: ${MONIMO_AGENT_TOKEN:-local-agent-token}
     # 에이전트 mTLS (backend #159 · ADR #64). .env 의 MONIMO_OTLP_CERTS_DIR 이 비어 있으면(기본) 없는 파일을 가리켜 아무것도 안 읽고
@@ -119,7 +119,7 @@ services:
       # 에이전트 이름표. 재시작해도 그대로 (payment 설명 참고, #30)
       OTEL_RESOURCE_ATTRIBUTES: "service.instance.id=shop-inventory-local-1,deployment.environment.name=local"
       OTEL_MONIMO_AGENT_TOKEN: ${MONIMO_AGENT_TOKEN:-local-agent-token}   # 스레드 덤프 Extension (payment 설명 참고)
-      # Redis 는 peer 매핑에 넣지 않는다. 넣으면 서버맵이 Redis 를 DB 가 아니라 우리 서비스로 잘못 그린다 (#32)
+      # Redis 는 peer 매핑에 넣지 않는다. 넣으면 Service map 이 Redis 를 DB 가 아니라 우리 서비스로 잘못 그린다 (#32)
     # 에이전트 mTLS (backend #159 · ADR #64). .env 의 MONIMO_OTLP_CERTS_DIR 이 비어 있으면(기본) 없는 파일을 가리켜 아무것도 안 읽고
     # 지금처럼 평문(agent.properties 의 http://collector:4317)이다. 채우면 그 폴더(backend compose 가 monimo-backend/certs 에 만든다)의
     # env/shop-inventory.env 를 읽어 https 주소와 파일 셋(기관 인증서 · 이 서비스의 신분증 · 열쇠)을 받고, 폴더를 /certs 로 읽는다.
@@ -159,8 +159,8 @@ services:
       # 에이전트 이름표. 재시작해도 그대로 (payment 설명 참고, #30)
       OTEL_RESOURCE_ATTRIBUTES: "service.instance.id=shop-order-local-1,deployment.environment.name=local"
       OTEL_MONIMO_AGENT_TOKEN: ${MONIMO_AGENT_TOKEN:-local-agent-token}   # 스레드 덤프 Extension (payment 설명 참고)
-      # 서버맵에서 order → payment 를 "우리 서비스" 로 잇는다. 에이전트는 상대 서비스 이름(peer.service)을 비워 보내는데,
-      # 비어 있으면 서버맵 집계가 주소(payment:8092)를 외부 시스템으로 분류한다(Q20). 호스트 이름이 환경마다 달라 agent.properties 가 아니라 여기 둔다.
+      # Service map 에서 order → payment 를 "우리 서비스" 로 잇는다. 에이전트는 상대 서비스 이름(peer.service)을 비워 보내는데,
+      # 비어 있으면 Service map 집계가 주소(payment:8092)를 외부 시스템으로 분류한다(Q20). 호스트 이름이 환경마다 달라 agent.properties 가 아니라 여기 둔다.
       # pg-stub 은 외부 결제사라 일부러 넣지 않는다. Redis · MySQL 도 넣지 않는다 (DB 는 db.system 으로 가려진다)
       OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING: "payment=shop-payment,inventory=shop-inventory"
     # 에이전트 mTLS (backend #159 · ADR #64). .env 의 MONIMO_OTLP_CERTS_DIR 이 비어 있으면(기본) 없는 파일을 가리켜 아무것도 안 읽고
@@ -188,7 +188,7 @@ services:
       retries: 30
       start_period: 30s
 
-  # 입구. 손님(k6 · 파수꾼 카나리)은 여기(8090)로 들어온다. /api/orders 는 주문, /api/stock 은 재고 서비스로 그대로 넘기기만 한다
+  # 입구. 손님(k6 · Watchdog 카나리)은 여기(8090)로 들어온다. /api/orders 는 주문, /api/stock 은 재고 서비스로 그대로 넘기기만 한다
   gateway:
     build:
       context: .
@@ -202,7 +202,7 @@ services:
       # 에이전트 이름표. 재시작해도 그대로 (payment 설명 참고, #30)
       OTEL_RESOURCE_ATTRIBUTES: "service.instance.id=shop-gateway-local-1,deployment.environment.name=local"
       OTEL_MONIMO_AGENT_TOKEN: ${MONIMO_AGENT_TOKEN:-local-agent-token}   # 스레드 덤프 Extension (payment 설명 참고)
-      # gateway → order · inventory 를 서버맵에서 우리 서비스로 잇는다 (없으면 order:8091 이 외부로 잡힌다)
+      # gateway → order · inventory 를 Service map 에서 우리 서비스로 잇는다 (없으면 order:8091 이 외부로 잡힌다)
       OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING: "order=shop-order,inventory=shop-inventory"
     # 에이전트 mTLS (backend #159 · ADR #64). .env 의 MONIMO_OTLP_CERTS_DIR 이 비어 있으면(기본) 없는 파일을 가리켜 아무것도 안 읽고
     # 지금처럼 평문(agent.properties 의 http://collector:4317)이다. 채우면 그 폴더(backend compose 가 monimo-backend/certs 에 만든다)의

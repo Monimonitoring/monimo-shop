@@ -3,7 +3,8 @@
 감시 대상 쇼핑몰 4종(게이트웨이 · 주문 · 결제 · 재고)과 OTel Java Agent 설정, 스레드 덤프 Extension
 
 - 기술: Kotlin 2.2 · Spring Boot 3.5 · Java 17 · Gradle 8.14 (멀티모듈 5개: gateway · order · payment · inventory · agent-extension) · OTel Java Agent
-- 상태: Phase 1a 주문 · 결제 호출 골격 + 에이전트 부착 + compose 완료
+- 상태: 네 서비스(gateway · order · payment · inventory + Redis 캐시) · 에이전트 부착 · mTLS · 스레드 덤프 Extension · 오버헤드 측정까지 완료
+- 용어: 문서 · 주석은 현업 이름(Collector · Ingester · Watchdog 등)을 쓴다. 대응표는 [backend `docs/design/glossary.md`](https://github.com/Monimonitoring/monimo-backend/blob/develop/docs/design/glossary.md) (backend `#240`)
 
 ## 폴더 구성
 
@@ -14,7 +15,7 @@
 | `payment/` | 결제 (1a) |
 | `inventory/` | 재고 (1b). MySQL `stock` 표 + Redis 조회 캐시 |
 | `agent-extension/` | 스레드 덤프 명령 수신 Extension (Java, 우리가 만드는 유일한 에이전트 코드). [`agent-extension/README.md`](agent-extension/README.md) |
-| `otel/` | OTel Java Agent 설정 · 버전 고정 — `agent.properties`(전송 gRPC · 수집기 `collector:4317` · 샘플러 always_on) · `AGENT_VERSION` |
+| `otel/` | OTel Java Agent 설정 · 버전 고정 — `agent.properties`(전송 gRPC · Collector `collector:4317` · 샘플러 always_on) · `AGENT_VERSION` |
 | `k6/` | 부하 · 에러 주입 시나리오 |
 | `pg-stub/` | 더미 외부 결제사 (WireMock 응답 정의, 에이전트 없음) |
 | `perf/overhead/` | 에이전트 오버헤드 측정 (붙임 · 뗌을 같은 부하로 비교). [`perf/overhead/README.md`](perf/overhead/README.md) |
@@ -44,7 +45,7 @@ curl -X POST localhost:8090/api/orders -H 'Content-Type: application/json' \
 
 Redis 가 죽으면 어떻게 되나 보려면 `docker compose -f docker-compose.dev.yml stop redis` 뒤에 재고를 조회한다. MySQL 로 대신 읽어 200 이 오되 최대 1초 걸리고(`spring.data.redis.timeout=500ms` 를 `GET` · `SET` 이 한 번씩 기다린다, `LoggingCacheErrorHandler`), 주문은 그대로 201 이다. 트레이스에는 실패한 Redis 스팬과 지연이 남는다. `start redis` 로 되돌린다. 재고 서비스의 헬스체크는 Redis 를 보지 않아(`management.health.redis.enabled=false`) 그동안에도 UP 이다.
 
-서버맵에서 서비스끼리 잇는 이름은 compose 의 `OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING`(호스트 이름 → 서비스 이름, 지금 order 에 `payment=shop-payment,inventory=shop-inventory`, gateway 에 `order=shop-order,inventory=shop-inventory`)이 정한다. 비어 있으면 상대가 외부 시스템으로 잡힌다. 새 서비스가 생기면 여기에 짝을 더하고, 외부 결제사 `pg-stub` 은 넣지 않는다. MySQL · Redis 도 넣지 않는다 : 에이전트가 `db.system` 을 붙여 DB 로 잡히는데, 매핑에 넣으면 우리 서비스로 잘못 그려진다.
+Service map 에서 서비스끼리 잇는 이름은 compose 의 `OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING`(호스트 이름 → 서비스 이름, 지금 order 에 `payment=shop-payment,inventory=shop-inventory`, gateway 에 `order=shop-order,inventory=shop-inventory`)이 정한다. 비어 있으면 상대가 외부 시스템으로 잡힌다. 새 서비스가 생기면 여기에 짝을 더하고, 외부 결제사 `pg-stub` 은 넣지 않는다. MySQL · Redis 도 넣지 않는다 : 에이전트가 `db.system` 을 붙여 DB 로 잡히는데, 매핑에 넣으면 우리 서비스로 잘못 그려진다.
 
 에이전트 이름표(`service.instance.id`)는 compose 의 `OTEL_RESOURCE_ATTRIBUTES` 가 정한다(`shop-order-local-1` 처럼). 안 주면 에이전트가 뜰 때마다 랜덤 UUID 를 만들어, 재시작할 때마다 백엔드 화면에 새 에이전트가 붙은 것처럼 보인다(`#30`). 백엔드는 이 값을 `agent_id` 로 쓴다. 같은 키라 `agent.properties` 의 `deployment.environment.name=local` 을 통째로 덮으므로 함께 적는다.
 
@@ -62,11 +63,11 @@ env:
 
 이름은 파드 이름 그대로 쓴다. 같은 백엔드로 두 네임스페이스(staging · prod)의 쇼핑몰이 같이 들어오게 되면 `$(POD_NAMESPACE).$(POD_NAME)` 으로 바꾼다. 결정 과정은 [`docs/seungjo/30-service-instance-id/`](docs/seungjo/30-service-instance-id/README.md).
 
-스레드 덤프 Extension(`agent-extension.jar`)도 네 이미지에 들어 있다. 수집기(`collector:8081`)에 명령을 받으러 가는데, 수집기가 꺼져 있으면 1 → 60초 간격으로 다시 물을 뿐 쇼핑몰은 정상으로 뜬다. 토큰은 `OTEL_MONIMO_AGENT_TOKEN`(기본 `local-agent-token`, 수집기 `MONIMO_AGENT_TOKEN` 과 같아야 함). 덤프를 손으로 떠 보는 법은 [`agent-extension/README.md`](agent-extension/README.md).
+스레드 덤프 Extension(`agent-extension.jar`)도 네 이미지에 들어 있다. Collector(`collector:8081`)에 명령을 받으러 가는데, Collector 가 꺼져 있으면 1 → 60초 간격으로 다시 물을 뿐 쇼핑몰은 정상으로 뜬다. 토큰은 `OTEL_MONIMO_AGENT_TOKEN`(기본 `local-agent-token`, Collector `MONIMO_AGENT_TOKEN` 과 같아야 함). 덤프를 손으로 떠 보는 법은 [`agent-extension/README.md`](agent-extension/README.md).
 
-데이터를 수집기까지 보내려면 monimo-backend 에서 `docker compose --profile collector up -d --wait` 로 수집기를 같이 켠다. 수집기가 꺼져 있어도 쇼핑몰은 정상으로 뜬다(에이전트는 전송 실패를 로그로만 남긴다).
+데이터를 Collector 까지 보내려면 monimo-backend 에서 `docker compose --profile collector up -d --wait` 로 Collector 를 같이 켠다. Collector 가 꺼져 있어도 쇼핑몰은 정상으로 뜬다(에이전트는 전송 실패를 로그로만 남긴다).
 
-수집기가 에이전트 신분증을 요구하면(backend `.env` 의 `COLLECTOR_TLS_CLIENT_AUTH=optional|require`, backend `#159` · ADR `#64`) 쇼핑몰 `.env` 에 `MONIMO_OTLP_CERTS_DIR=../monimo-backend/certs` 한 줄을 열고 다시 띄운다. 인증서는 backend compose 가 켤 때 만들고, 네 서비스는 그 폴더의 `env/shop-<서비스>.env` 로 `https` 주소와 각자 이름의 신분증(`clients/shop-<서비스>.crt` · `.key`)을 받는다. 수집기는 도장만 보고 이름은 검사하지 않는다. 자바 코드는 0줄이다. 잘 붙었는지는 수집기 관리 포트의 `/actuator/metrics/monimo.collector.otlp.connections?tag=auth:mtls` 가 4 인지로 본다. 신호가 갑자기 끊기면 **신분증 기간(5년)이 지났는지**를 먼저 본다 : 갱신은 backend `certs/` 를 지우고 다시 만든 뒤 수집기와 쇼핑몰을 재시작하는 것이다.
+Collector 가 에이전트 신분증을 요구하면(backend `.env` 의 `COLLECTOR_TLS_CLIENT_AUTH=optional|require`, backend `#159` · ADR `#64`) 쇼핑몰 `.env` 에 `MONIMO_OTLP_CERTS_DIR=../monimo-backend/certs` 한 줄을 열고 다시 띄운다. 인증서는 backend compose 가 켤 때 만들고, 네 서비스는 그 폴더의 `env/shop-<서비스>.env` 로 `https` 주소와 각자 이름의 신분증(`clients/shop-<서비스>.crt` · `.key`)을 받는다. Collector 는 도장만 보고 이름은 검사하지 않는다. 자바 코드는 0줄이다. 잘 붙었는지는 Collector 관리 포트의 `/actuator/metrics/monimo.collector.otlp.connections?tag=auth:mtls` 가 4 인지로 본다. 신호가 갑자기 끊기면 **신분증 기간(5년)이 지났는지**를 먼저 본다 : 갱신은 backend `certs/` 를 지우고 다시 만든 뒤 Collector 와 쇼핑몰을 재시작하는 것이다.
 
 ### 코드만 빠르게 — Gradle (에이전트 없음)
 
@@ -85,7 +86,7 @@ compose 로 결제 · 주문을 켜 둔 상태에서 `bootRun` 을 하면 포트
 
 감시 대상이라 제품 기능은 없고 호출 골격만 있다. 손님은 게이트웨이로 들어오고, 주문 한 건이 `gateway → order` · `order → MySQL` · `order → inventory` · `inventory → MySQL` · `order → payment` · `payment → 외부 결제사(pg-stub)` 여섯 홉을 만든다. 재고 조회 한 건은 `gateway → inventory` · `inventory → Redis`(캐시에 없으면 `→ MySQL` 뒤 `→ Redis`)다.
 
-파수꾼 카나리와 k6 가 이 모양을 그대로 쓴다.
+Watchdog 카나리와 k6 가 이 모양을 그대로 쓴다.
 
 | 메서드 · 경로 | 서비스 | 응답 |
 |---|---|---|
@@ -148,9 +149,9 @@ python3 perf/overhead/summarize.py                           # 서비스별 중�
 | `ORDER_BASE_URL` | http://localhost:8091 | 게이트웨이가 넘길 주문 서비스 주소. `bootRun` 기준 기본값이고, compose 에서는 이미지 기본값 `http://order:8091` 을 쓴다 |
 | `INVENTORY_BASE_URL` | http://localhost:8093 | 게이트웨이 · 주문 서비스가 부를 재고 서비스 주소. `bootRun` 기준 기본값이고, compose 에서는 이미지 기본값 `http://inventory:8093` 을 쓴다 |
 | `PAYMENT_BASE_URL` | http://localhost:8092 | 주문 서비스가 부를 결제 서비스 주소. `bootRun` 기준 기본값이고, compose 에서는 이미지 기본값 `http://payment:8092` 를 쓴다 |
-| `MONIMO_OTLP_CERTS_DIR` | (비움 = 평문) | 에이전트 mTLS 인증서 폴더 (backend `#159` · ADR `#64`). backend compose 가 `monimo-backend/certs` 에 만든다. 채우면 네 서비스가 그 안의 `env/shop-<서비스>.env` 를 읽어 `https://collector:4317` 과 파일 셋(`OTEL_EXPORTER_OTLP_CERTIFICATE` 기관 인증서 · `..._CLIENT_CERTIFICATE` · `..._CLIENT_KEY` 자기 이름의 신분증 · 열쇠)을 받고, 폴더를 `/certs` 로 읽는다. 비우면 `otel/agent.properties` 의 평문 `http://collector:4317` 그대로. 수집기 주소만 따로 바꾸던 `OTEL_EXPORTER_OTLP_ENDPOINT` 는 `#40` 에서 뺐다(빈 값이 env_file 값을 덮는다) |
+| `MONIMO_OTLP_CERTS_DIR` | (비움 = 평문) | 에이전트 mTLS 인증서 폴더 (backend `#159` · ADR `#64`). backend compose 가 `monimo-backend/certs` 에 만든다. 채우면 네 서비스가 그 안의 `env/shop-<서비스>.env` 를 읽어 `https://collector:4317` 과 파일 셋(`OTEL_EXPORTER_OTLP_CERTIFICATE` 기관 인증서 · `..._CLIENT_CERTIFICATE` · `..._CLIENT_KEY` 자기 이름의 신분증 · 열쇠)을 받고, 폴더를 `/certs` 로 읽는다. 비우면 `otel/agent.properties` 의 평문 `http://collector:4317` 그대로. Collector 주소만 따로 바꾸던 `OTEL_EXPORTER_OTLP_ENDPOINT` 는 `#40` 에서 뺐다(빈 값이 env_file 값을 덮는다) |
 | `OTEL_SERVICE_NAME` | (컨테이너별) | `shop-gateway` · `shop-order` · `shop-payment` · `shop-inventory` |
-| `MONIMO_AGENT_TOKEN` | local-agent-token | 스레드 덤프 Extension 이 수집기에 붙이는 토큰 (compose 가 `OTEL_MONIMO_AGENT_TOKEN` 으로 넘김). 수집기 값과 같아야 한다 |
+| `MONIMO_AGENT_TOKEN` | local-agent-token | 스레드 덤프 Extension 이 Collector 에 붙이는 토큰 (compose 가 `OTEL_MONIMO_AGENT_TOKEN` 으로 넘김). Collector 값과 같아야 한다 |
 | `OTEL_RESOURCE_ATTRIBUTES` | (컨테이너별) | 에이전트 이름표와 환경. compose 는 `service.instance.id=shop-<서비스>-local-1,deployment.environment.name=local`, 쿠버네티스는 Downward API 로 파드 이름 (위 「한 번에 켜기」) |
 
 ## 포트

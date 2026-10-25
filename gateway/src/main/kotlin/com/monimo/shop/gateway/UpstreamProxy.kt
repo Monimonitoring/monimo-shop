@@ -14,7 +14,7 @@ import org.springframework.web.util.UriComponentsBuilder
 
 /**
  * 받은 요청을 뒤 서비스(주문 · 재고)로 그대로 넘기고, 응답(상태 코드 · 본문)을 바꾸지 않고 돌려준다.
- * 서버맵의 gateway → order · gateway → inventory 화살표가 여기서 나온다. 어디로 보낼지는 GatewayController 가 경로로 정한다.
+ * Service map 의 gateway → order · gateway → inventory 화살표가 여기서 나온다. 어디로 보낼지는 GatewayController 가 경로로 정한다.
  */
 @Component
 class UpstreamProxy(private val restTemplate: RestTemplate) {

@@ -7,7 +7,7 @@ import java.sql.Statement
 
 /**
  * orders 표 접근. SQL 을 직접 쓴다.
- * OTel Java Agent 의 JDBC 계측이 이 쿼리들을 스팬으로 남겨 서버맵에 MySQL 노드가 생긴다. 여기엔 계측 코드가 없다.
+ * OTel Java Agent 의 JDBC 계측이 이 쿼리들을 스팬으로 남겨 Service map 에 MySQL 노드가 생긴다. 여기엔 계측 코드가 없다.
  */
 @Repository
 class OrderRepository(private val jdbc: JdbcTemplate) {

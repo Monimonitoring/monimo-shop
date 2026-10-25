@@ -13,14 +13,14 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * 일꾼 스레드의 일. 수집기에 "명령 있어?" 를 묻고(롱폴링), 명령이 오면 덤프를 떠서 회신 주소로 보낸다.
+ * 일꾼 스레드의 일. Collector 에 "명령 있어?" 를 묻고(롱폴링), 명령이 오면 덤프를 떠서 회신 주소로 보낸다.
  *
  * <pre>
  * loop {
- *   GET {collector}/agent/commands?service=…&instance=…   (수집기는 최대 25초 붙잡는다, 우리는 30초까지 기다린다)
+ *   GET {collector}/agent/commands?service=…&instance=…   (Collector 는 최대 25초 붙잡는다, 우리는 30초까지 기다린다)
  *     204       → 명령 없음, 곧바로 다시 묻는다
  *     200       → THREAD_DUMP 면 덤프 → POST {reply_to}/agent/commands/{id}/result (1초 간격 3번까지)
- *                 읽을 수 없는 본문이면 백오프 (주소가 수집기가 아닌 곳을 가리킬 때 고속 루프를 막는다)
+ *                 읽을 수 없는 본문이면 백오프 (주소가 Collector 가 아닌 곳을 가리킬 때 고속 루프를 막는다)
  *     409       → 같은 이름표의 다른 JVM 이 폴링 중 (이름표 중복 설정). 백오프
  *     그 밖     → 1 → 60초 백오프 뒤 다시
  * }
@@ -32,7 +32,7 @@ import java.util.logging.Logger;
 final class CommandPoller implements Runnable {
 
     static final String TOKEN_HEADER = "X-Monimo-Agent-Token";
-    static final Duration POLL_TIMEOUT = Duration.ofSeconds(30);   // 수집기 대기(25초)보다 길게
+    static final Duration POLL_TIMEOUT = Duration.ofSeconds(30);   // Collector 대기(25초)보다 길게
     static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     static final Duration RESULT_TIMEOUT = Duration.ofSeconds(10);
     static final int RESULT_ATTEMPTS = 3;
@@ -68,9 +68,9 @@ final class CommandPoller implements Runnable {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (Throwable e) {
-                // 수집기가 꺼져 있거나 재시작 중. 다음 GET 이 새 연결로 나가므로 따로 재연결 코드는 없다.
+                // Collector 가 꺼져 있거나 재시작 중. 다음 GET 이 새 연결로 나가므로 따로 재연결 코드는 없다.
                 // Exception 이 아니라 Throwable 을 잡는다 : Error(에이전트 버전 불일치 · 메모리)로 일꾼이 조용히 죽으면 다시 뜨지 않는다.
-                // 같은 종류의 실패는 처음 한 번만 WARNING (수집기가 꺼진 동안 로그가 넘치지 않게)
+                // 같은 종류의 실패는 처음 한 번만 WARNING (Collector 가 꺼진 동안 로그가 넘치지 않게)
                 String kind = e.getClass().getName();
                 if (!kind.equals(lastFailure)) {
                     log.log(Level.WARNING, "[monimo] 명령 폴링 실패 (같은 실패는 다시 안 찍는다) : " + e);
@@ -109,7 +109,7 @@ final class CommandPoller implements Runnable {
         }
         backoff.reset();
         lastFailure = null;
-        // THREAD_DUMP 말고는 무시한다. 수집기가 뚫려도 쇼핑몰에서 임의 동작을 시킬 수 없게 (합의안 4)
+        // THREAD_DUMP 말고는 무시한다. Collector 가 뚫려도 쇼핑몰에서 임의 동작을 시킬 수 없게 (합의안 4)
         if (!Command.THREAD_DUMP.equals(command.type())) {
             log.warning("[monimo] 모르는 명령을 무시했다 : " + command.type());
             return true;
@@ -118,7 +118,7 @@ final class CommandPoller implements Runnable {
         return true;
     }
 
-    /** 덤프를 명령을 준 수집기(reply_to)로 보낸다. 실패하면 1초 간격 3번까지, 그래도 안 되면 로그만 남기고 버린다 */
+    /** 덤프를 명령을 준 Collector(reply_to)로 보낸다. 실패하면 1초 간격 3번까지, 그래도 안 되면 로그만 남기고 버린다 */
     void sendResult(Command command, ThreadDumper.Dump dump) throws InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(stripSlash(command.replyTo()) + "/agent/commands/"
                         + URLEncoder.encode(command.commandId(), StandardCharsets.UTF_8) + "/result"))
@@ -131,7 +131,7 @@ final class CommandPoller implements Runnable {
             try {
                 int status = quietly(() -> http.send(request, HttpResponse.BodyHandlers.discarding())).statusCode();
                 if (status == 200) return;
-                // 404 = 수집기가 이미 기다리기를 끝냈다(시간 초과). 다시 보내도 받을 쪽이 없다
+                // 404 = Collector 가 이미 기다리기를 끝냈다(시간 초과). 다시 보내도 받을 쪽이 없다
                 if (status == 404) {
                     log.warning("[monimo] 덤프 결과를 받을 명령이 이미 끝났다 : " + command.commandId());
                     return;

@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/orders")
 class OrderController(private val service: OrderService) {
 
-    /** 파수꾼 카나리와 k6 가 부르는 문. 결제 · 재고 서비스 실패면 502(5xx 규칙), 재고 부족이면 409(4xx 규칙)로 답한다. */
+    /** Watchdog 카나리와 k6 가 부르는 문. 결제 · 재고 서비스 실패면 502(5xx 규칙), 재고 부족이면 409(4xx 규칙)로 답한다. */
     @PostMapping
     fun create(
         @RequestBody req: CreateOrderRequest,

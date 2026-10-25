@@ -26,6 +26,6 @@ spring:
 management:
   health:
     redis:
-      # 끈다. 켜 두면 /actuator/health 마다 Redis 에 INFO 를 보내 헬스체크 필터(backend #92)가 못 거르는 고아 스팬이 남고,
+      # 끈다. 켜 두면 /actuator/health 마다 Redis 에 INFO 를 보내 헬스체크 필터(backend #92)가 못 거르는 orphan span 이 남고,
       # 캐시가 죽었다고 재고 서비스까지 DOWN 이 된다 (research ⑧ : d1)
       enabled: false
