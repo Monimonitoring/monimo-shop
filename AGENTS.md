@@ -78,7 +78,8 @@ CI 는 **build**(Gradle 컴파일 + 테스트) → **smoke**(compose 로 띄운 
 - 재고 서비스 + Redis 캐시 (`#32`). 주문이 결제 전에 재고를 조건부 UPDATE 로 차감하고 모자라면 409, 결제 실패면 복원(주문 번호로 한 번만). 조회만 cache-aside, Redis 헬스체크는 끔(orphan span), timeout 500ms + DB 폴백. k6 에 재고 조회 손님 · inventory-slow · inventory-error · 품절 추가
 - 에이전트 mTLS (`#40`, backend `#159` · ADR `#64`). Collector 가 손님 신분증을 요구할 때 네 서비스가 자기 이름의 신분증을 내도록 compose 에 OTel 인증서 환경변수 셋과 `/certs` 마운트. `.env` 의 `MONIMO_OTLP_CERTS_DIR` 이 비어 있으면(기본) 평문 그대로. 자바 코드 0줄
 - `AGENTS.md` · `CLAUDE.md`, README 「AI 와 일한 방법」 절, `docs/prompts/`(프롬프트 로그 : 코드와 같은 PR 에). 하네스 정본은 backend `docs/seungjo/harness.md` 한 곳
-- 2026-10-26 문서 · 주석의 우리말 조어를 현업 이름으로 바꿨다 (backend `#240` · ADR `#73`). 코드 안 문자열(테스트 이름 · 스크립트 출력)은 backend `#241`
+- 2026-10-26 문서 · 주석의 우리말 조어를 현업 이름으로 바꿨다 (backend `#240` · ADR `#73`).
+- 2026-10-26 코드 안 문자열도 같은 이름으로 바꿨다 (backend `#241`) : 테스트 이름 · Extension 로그 문구(`Collector 가 명령 폴링에 …`)
 
 ## 6. 지금 막혀 있는 것
 
