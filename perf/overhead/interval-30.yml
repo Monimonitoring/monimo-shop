@@ -1,0 +1,14 @@
+# 측정 변형 : 메트릭 전송 간격만 10초(지금) → 30초. 다른 것은 그대로다 (#51)
+#
+# 무엇이 바뀌나 : 쌓인 지표를 Collector 로 "보내는" 횟수가 60초 창에서 6번 → 2번이 된다.
+#   요청마다 히스토그램 칸에 "적는" 일은 그대로다 (research.md 2.1 의 「지표 두 종류」).
+#   그래서 이 변형으로 줄어드는 것은 보내기와 내보낼 때 읽는 게이지뿐이다
+#
+# 운영 후보다 : 30초는 저장소의 1분 칸보다 짧아 backend #238(1분이 비고 다음 1분에 2분치가 몰린다)을 안 건드린다
+x-env: &env
+  OTEL_METRIC_EXPORT_INTERVAL: "30000"
+services:
+  gateway:   {environment: *env}
+  order:     {environment: *env}
+  payment:   {environment: *env}
+  inventory: {environment: *env}
