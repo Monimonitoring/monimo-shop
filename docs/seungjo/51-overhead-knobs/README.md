@@ -45,7 +45,7 @@
 | 배치 묶음 512 → 1024 · 주기 5 → 10초 | CPU | **안 줄었다** | 안 줄었다 |
 | 계측 범위 줄이기 | CPU · 메모리 | 안 줄었다 | **약 20MB 줄었다** |
 
-- **뗌과 붙임은 갈리고 변형끼리는 안 갈린다** : 뗌 최대 11.64ms < 붙임 최소 12.34ms 인데, 붙임 변형 여덟의 폭은 12.3 ~ 14.2 로 전부 겹친다
+- **뗌과 붙임은 갈리고 변형끼리는 안 갈린다** : 뗌 최대 17.48ms < 붙임 최소 18.51ms 인데, 붙임 변형 여덟의 폭은 18.5 ~ 28.6 으로 전부 겹친다 (주문 1건당 CPU · 뗌 중앙 16.61ms → 그대로 19.98ms)
 - **왜 안 줄었나는 받은 건수가 답을 줬다** : 메트릭 쇼핑몰 몫이 558 : 186 : 93 = 6 : 2 : 1 로 간격의 역수 그대로 줄었고, 스팬은 20,608 → 226 으로 약 91배 줄었다. **보내는 양을 91배 줄였는데 CPU 가 그대로**라 비용은 보내기가 아니라 **계측 자체**에 있다
 - **`#36` 과 합쳐야 짚힌다** : `#36` 의 `metrics-off`(적는 것까지 끔)는 CPU 의 약 5분의 1 을 가져갔는데 이번 `interval`(보내는 횟수만 줄임)은 0 을 가져갔다. **적는 일은 비용이고 보내는 일은 비용이 아니다**
 - **계측 범위 줄이기는 `#36` 의 10 ~ 20MB 를 굳힌 것**이다(3회차 → 5회차, 폭이 안 겹치는 것까지). 발견이 아니라 확인이다. 다만 **메트릭 84건이 빠진다**(`#36` 이 짚은 커넥션 풀 지표 · 로그 MDC 주입)
@@ -62,15 +62,16 @@
 
 ## 결과물
 
-- 새 파일 : `perf/overhead/` 에 변형 여섯(`interval-30` · `interval-60` · `sampling-10` · `sampling-1` · `batch-size` · `batch-delay`)과 `suite-51.sh`, 이 폴더(`README` · `results.md` · `results.csv`)
+- 새 파일 : `perf/overhead/` 에 변형 여섯(`interval-30` · `interval-60` · `sampling-10` · `sampling-1` · `batch-size` · `batch-delay`)과 `suite-51.sh`, 이 폴더(`README` · `results.md` · `results.csv` · `share.md`)
 - 수정 : `perf/overhead/run.sh`(변형 여섯 · 받은 건수 두 열 · CSV 머리 검사) · `summarize.py`(받은 건수 표) · `perf/overhead/README.md` · `research.md` 9절 · `AGENTS.md` §5 · §6
 
 ## 읽는 순서
 
-1. [`prompts.md`](prompts.md)
-2. [`research.md`](research.md)
-3. [`results.md`](results.md)
-4. [`../../../perf/overhead/README.md`](../../../perf/overhead/README.md)
+1. [`share.md`](share.md) : 팀에 보낸 공유글 (가장 짧다)
+2. [`prompts.md`](prompts.md)
+3. [`research.md`](research.md)
+4. [`results.md`](results.md)
+5. [`../../../perf/overhead/README.md`](../../../perf/overhead/README.md)
 
 ## 이 이슈에서 배운 것 (세 줄)
 
