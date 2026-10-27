@@ -3,13 +3,15 @@
 #
 #   perf/overhead/run.sh <변형> <초당 건수> [측정 초] [CSV 경로]
 #   변형 : on (그대로) · off (에이전트 뗌) · metrics-off · instr-min · nmt-on · nmt-off
+#          interval-30 · interval-60 (메트릭 전송 간격) · sampling-10 · sampling-1 (앱 쪽 샘플링)
+#          batch-size · batch-delay (한 번에 보내는 묶음 · 보내는 주기)  ← 여기까지 #51
 #   초당 건수 0 이면 부하 없이 가만히 둔 채 잰다
 #
 # CPU 는 컨테이너 cgroup 의 cpu.stat usage_usec(지금까지 쓴 CPU 시간 누적)를 측정 구간 앞뒤로 읽어 뺀다.
 # 메모리는 측정이 끝난 순간의 memory.current. 둘 다 JVM 바깥에서 읽으므로 에이전트가 있든 없든 똑같이 잰다 (#36)
 set -euo pipefail
 
-VARIANT=${1:?변형 (on · off · metrics-off · instr-min · nmt-on · nmt-off)}
+VARIANT=${1:?변형 (on · off · metrics-off · instr-min · nmt-on · nmt-off · interval-30 · interval-60 · sampling-10 · sampling-1 · batch-size · batch-delay)}
 RATE=${2:?초당 건수}
 SECS=${3:-60}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -18,6 +20,18 @@ CSV=${4:-$HERE/out/results.csv}
 WARMUP_SECS=40   # 막 뜬 JVM 은 JIT 전이라 무겁다. 이 구간은 버린다
 SERVICES="gateway order payment inventory"
 K6_IMAGE=grafana/k6:2.3.0
+COLLECTOR_METRICS=${COLLECTOR_METRICS:-http://localhost:18081/actuator/metrics}
+
+# 수집기가 받은 건수(누적). 신호별로 센다. 못 읽으면 빈 값으로 둔다 (뗌 회차는 수집기가 없어도 돌 수 있다)
+#
+# 주의 : 이 값은 "보낸 횟수" 가 아니라 "받은 건수(데이터 포인트 · 스팬 개수)" 다 (OtlpReceiveCounter).
+#   전송 횟수를 알려면 한 번에 몇 건이 오는지(P)로 나눠야 하고, P 가 회차마다 같은지는 이 열로 확인한다.
+#   그리고 이 카운터는 발신자를 안 가린다 : 쇼핑몰 말고 다른 것이 같은 수집기로 보내면 섞인다.
+#   뗌(off) 회차의 값이 그 "다른 것" 의 몫이라 배경값으로 쓸 수 있다 (#51 research.md 7절)
+received() { # $1 = traces · metrics · logs
+  curl -fsS --max-time 3 "$COLLECTOR_METRICS/monimo.collector.otlp.received?tag=signal:$1" 2>/dev/null \
+    | python3 -c 'import sys,json; print(int(json.load(sys.stdin)["measurements"][0]["value"]))' 2>/dev/null || echo ""
+}
 
 FILES=(-f "$ROOT/docker-compose.dev.yml" -f "$HERE/limits.yml")
 case "$VARIANT" in
@@ -27,6 +41,12 @@ case "$VARIANT" in
   instr-min)   FILES+=(-f "$HERE/instr-min.yml") ;;
   nmt-on)      FILES+=(-f "$HERE/nmt.yml") ;;
   nmt-off)     FILES+=(-f "$HERE/no-agent.yml" -f "$HERE/nmt.yml") ;;
+  interval-30) FILES+=(-f "$HERE/interval-30.yml") ;;
+  interval-60) FILES+=(-f "$HERE/interval-60.yml") ;;
+  sampling-10) FILES+=(-f "$HERE/sampling-10.yml") ;;
+  sampling-1)  FILES+=(-f "$HERE/sampling-1.yml") ;;
+  batch-size)  FILES+=(-f "$HERE/batch-size.yml") ;;
+  batch-delay) FILES+=(-f "$HERE/batch-delay.yml") ;;
   *) echo "모르는 변형: $VARIANT" >&2; exit 2 ;;
 esac
 compose() { docker compose "${FILES[@]}" "$@"; }
@@ -38,7 +58,20 @@ fi
 
 OUT=$(dirname "$CSV")
 mkdir -p "$OUT"
-[ -s "$CSV" ] || echo "time,variant,rate,secs,service,cpu_usec,mem_bytes,reqs,p95_ms,failed" > "$CSV"
+HEADER="time,variant,rate,secs,service,cpu_usec,mem_bytes,reqs,p95_ms,failed,recv_metrics,recv_traces"
+# 머리가 다른 CSV 에 덧붙이면 열이 밀려 기록이 통째로 못 쓰게 된다. 비었을 때만 쓰는 것으로는 못 막는다 :
+#   `#36` 때 쓴 out/results.csv 가 남아 있으면 그 옛 머리(열 10개)가 유지되고 새 회차만 열 12개로 붙는다 (2026-10-27 실측)
+if [ -s "$CSV" ]; then
+  [ "$(head -1 "$CSV")" = "$HEADER" ] || {
+    echo "CSV 머리가 지금 열과 다르다: $CSV" >&2
+    echo "  있는 것 : $(head -1 "$CSV")" >&2
+    echo "  필요한 것 : $HEADER" >&2
+    echo "  옛 기록이면 다른 이름으로 옮기고 다시 실행한다" >&2
+    exit 1
+  }
+else
+  echo "$HEADER" > "$CSV"
+fi
 
 # up 이 반쯤 실패해도 띄운 것은 내린다
 trap 'compose down >/dev/null 2>&1 || true' EXIT
@@ -61,10 +94,16 @@ cgroup() { # 서비스 · CPU 누적(µs) · 메모리(바이트). cgroup v2 전
 
 if [ "$RATE" = 0 ]; then sleep "$WARMUP_SECS"; else k6 "${WARMUP_SECS}s" || true; fi
 before=$(cgroup)
+rm1=$(received metrics); rt1=$(received traces)
+[ -n "$rm1" ] || echo "경고 : 수집기 받은 건수를 못 읽었다($COLLECTOR_METRICS). recv_* 열이 빈다" >&2
 SUMMARY="$OUT/k6-summary.json"
 rm -f "$SUMMARY"
 if [ "$RATE" = 0 ]; then sleep "$SECS"; else k6 "${SECS}s" --summary-export=/out/k6-summary.json; fi
 after=$(cgroup)
+rm2=$(received metrics); rt2=$(received traces)
+recv_metrics=""; recv_traces=""
+[ -n "$rm1" ] && [ -n "$rm2" ] && recv_metrics=$((rm2 - rm1))
+[ -n "$rt1" ] && [ -n "$rt2" ] && recv_traces=$((rt2 - rt1))
 
 read -r reqs p95 failed < <(python3 - "$SUMMARY" <<'PY'
 import json, sys, os
@@ -85,7 +124,7 @@ now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 for s in $SERVICES; do
   read -r _ u1 _ <<<"$(grep "^$s " <<<"$before")"
   read -r _ u2 mem <<<"$(grep "^$s " <<<"$after")"
-  echo "$now,$VARIANT,$RATE,$SECS,$s,$((u2 - u1)),$mem,$reqs,$p95,$failed" | tee -a "$CSV"
+  echo "$now,$VARIANT,$RATE,$SECS,$s,$((u2 - u1)),$mem,$reqs,$p95,$failed,$recv_metrics,$recv_traces" | tee -a "$CSV"
 done
 
 # NMT 는 JVM 이 끝날 때 찍으므로 멈춘 뒤 로그에서 꺼낸다

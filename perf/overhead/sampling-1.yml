@@ -1,0 +1,19 @@
+# 측정 변형 : 앱 쪽 트레이스 샘플링만 켠다 (지금 always_on → 1%). 다른 것은 그대로다 (#51)
+#
+# sampling-10.yml 의 설명이 그대로 적용된다. 1% 까지 내리는 이유는 #36 이 10% 까지만 보고
+#   "거의 효과 없음" 으로 남겼기 때문이다. 한 자리 더 내려도 앱 CPU 가 안 주는지 확인한다
+#
+# 운영의 shop 1% 와 숫자가 같지만 자리가 다르다 : 운영은 Collector 쪽에서 1% 를 깎고
+#   에이전트는 always_on 이다 (backend ADR #72). 여기서 1% 는 앱 쪽 실험값이다
+#
+# 잃는 것 : 트레이스가 100건 중 1건만 남는다. Service map 간선은 자주 쓰는 길이면 1% 로도 걸리지만
+#   드문 길은 표본에 안 들어와 사라진다. 그래서 이 변형 뒤에는 ClickHouse spans 를 뒤져
+#   "간선 수가 줄었나" 가 아니라 "어떤 간선이 사라졌나" 를 적는다 (research.md 7절)
+x-env: &env
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "0.01"
+services:
+  gateway:   {environment: *env}
+  order:     {environment: *env}
+  payment:   {environment: *env}
+  inventory: {environment: *env}

@@ -1,0 +1,18 @@
+# 측정 변형 : 한 번에 보내는 묶음 크기만 기본값의 2배로 (512 → 1024). 다른 것은 그대로다 (#51)
+#
+# 기본값은 에이전트 2.31.1 jar 에서 직접 읽었다 (#51 구현 1단계) :
+#   BatchSpanProcessorBuilder  DEFAULT_MAX_EXPORT_BATCH_SIZE = 512 · DEFAULT_MAX_QUEUE_SIZE = 2048
+#                              DEFAULT_SCHEDULE_DELAY_MILLIS = 5000 · DEFAULT_EXPORT_TIMEOUT_MILLIS = 30000
+#   우리 레포에는 bsp 설정이 한 줄도 없으니 이 값으로 돌고 있었다
+#
+# 묶음만 키운다 : 묶음 크기는 "한 번에 몇 개를 보내나" 라서 전송 횟수를 줄인다 → CPU 쪽을 본다
+#   큐 크기(2048)는 일부러 안 건드린다 : 큐는 전송 횟수를 안 바꾸고 메모리만 바꾸므로 섞으면 해석이 막힌다
+#
+# 주의 : 묶음을 큐보다 크게 두면 뜻이 없다. 1024 는 큐 2048 의 절반이라 아직 안전하다
+x-env: &env
+  OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "1024"
+services:
+  gateway:   {environment: *env}
+  order:     {environment: *env}
+  payment:   {environment: *env}
+  inventory: {environment: *env}

@@ -1,0 +1,17 @@
+# 측정 변형 : 보내는 주기만 기본값의 2배로 (5초 → 10초). 다른 것은 그대로다 (#51)
+#
+# 기본값은 에이전트 2.31.1 jar 에서 직접 읽었다 : BatchSpanProcessorBuilder DEFAULT_SCHEDULE_DELAY_MILLIS = 5000
+#
+# 주기만 늘린다 : 묶음이 덜 차도 5초마다 보내던 것을 10초마다로 → 전송 횟수가 준다 → CPU 쪽을 본다
+#
+# 잃는 것이 가장 분명한 변형이다 : 화면에 늦게 뜬다. 지금 쇼핑몰 요청 → 화면이 중앙 2.65초 · p95 5.1초이고
+#   그 대부분이 이미 이 기다림이다 (backend 실측). 주기를 5초 늘리면 그만큼 더 늦어지고,
+#   탐지가 30초 기다렸다 판정하는 구조와 경보 60초 기준에 닿는다. 그래서 이 변형은 CPU 가 줄어도
+#   지연을 같이 재서 적지 않으면 권고할 수 없다 (research.md 7절 「잃는 것 확인」)
+x-env: &env
+  OTEL_BSP_SCHEDULE_DELAY: "10000"
+services:
+  gateway:   {environment: *env}
+  order:     {environment: *env}
+  payment:   {environment: *env}
+  inventory: {environment: *env}

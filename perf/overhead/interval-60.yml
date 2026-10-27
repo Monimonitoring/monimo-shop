@@ -1,0 +1,16 @@
+# 측정 변형 : 메트릭 전송 간격만 10초(지금) → 60초. 다른 것은 그대로다 (#51)
+#
+# 운영 후보가 아니다. 재 두기만 한다 : 60초는 저장소의 1분 칸과 길이가 같아 전송이 조금씩 밀리면
+#   1분 칸이 비고 다음 칸에 2분치가 몰린다 (backend #238, PR #239 가 고치는 중).
+#   그래도 재는 이유는 「30초를 고르면서 CPU 몇 %p 를 포기했는가」를 숫자로 적기 위한 것이다
+#
+# 이 변형은 측정 자체도 까다롭다 : 본 측정 창(약 60초)과 간격이 같아 창 안의 전송 횟수가
+#   한 번 더 들어올 수 있다. 그 확률은 「남는 시간 ÷ 간격」으로 2~5% 다 (research.md 2.6.2).
+#   그래서 이 묶음만 회차를 10회로 두고 받은 건수를 회차마다 기록한다
+x-env: &env
+  OTEL_METRIC_EXPORT_INTERVAL: "60000"
+services:
+  gateway:   {environment: *env}
+  order:     {environment: *env}
+  payment:   {environment: *env}
+  inventory: {environment: *env}

@@ -8,17 +8,21 @@
 - 주문당   : 네 서비스 CPU 를 더해 주문 수(초당 건수 × 초)로 나눈 ms. k6/order.js 는 주문 절반 앞에 재고 조회
              (GET /api/stock)를 하나 더 보내므로, 주문 1건 = HTTP 요청 평균 1.5건이 쇼핑몰 전체에서 쓰는 CPU
 - 메모리   : 측정 끝 cgroup memory.current 차이
+- 받은 건수 : 수집기가 그 구간에 받은 데이터 포인트 · 스팬 개수(recv_metrics · recv_traces).
+             보낸 "횟수" 가 아니다. 한 번에 몇 건이 오는지(P)로 나눠야 횟수가 되고,
+             P 가 회차마다 같은지를 이 표로 확인한다 (#51)
 """
 import csv
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from statistics import median
 
 SERVICES = ["gateway", "order", "payment", "inventory"]
 path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "out", "results.csv")
 
 runs = defaultdict(lambda: defaultdict(list))  # (variant, rate) -> service -> [(cpu_s, mem_mb, secs)]
+recv = defaultdict(list)                       # (variant, rate) -> [(recv_metrics, recv_traces)]
 totals = defaultdict(list)                     # (variant, rate) -> [(total_cpu_s, reqs, p95, failed)]
 by_run = defaultdict(dict)
 with open(path) as f:
@@ -32,6 +36,8 @@ for r in rows:
     runs[key][r["service"]].append((cpu, int(r["mem_bytes"]) / 1048576, int(r["secs"])))
     orders = int(r["rate"]) * int(r["secs"])
     by_run[(r["time"], key)][r["service"]] = (cpu, orders, float(r["p95_ms"]), int(r["failed"]))
+    if r["service"] == SERVICES[0]:  # 회차마다 한 번만 (네 서비스 행에 같은 값이 들어 있다)
+        recv[key].append((r.get("recv_metrics") or "", r.get("recv_traces") or ""))
 for (_, key), svc in by_run.items():
     orders, p95, failed = next(iter(svc.values()))[1:]
     totals[key].append((sum(v[0] for v in svc.values()), orders, p95, failed))
@@ -66,3 +72,20 @@ for variant, rate in sorted(runs, key=lambda k: (k[1], k[0] != "on", k[0])):
         f = sum(x for *_, x in totals[(variant, rate)]) + sum(x for *_, x in totals[base])
         print(f"\n주문 1건당 쇼핑몰 전체 CPU (재고 조회 포함) : {t1:.2f}ms vs {t0:.2f}ms ({t1 - t0:+.2f}ms, {(t1 - t0) / t0 * 100:+.0f}%) · "
               f"k6 p95 {p1}ms vs {p0}ms · 실패한 check {f}건")
+
+# 받은 건수 : 회차마다 몇 건이 왔나. 값이 한 가지면 치우친 것이고, 두 가지가 섞이면 흔들린 것이다 (#51)
+rows_with_recv = [k for k in sorted(recv) if any(a or b for a, b in recv[k])]
+if rows_with_recv:
+    print("\n### 수집기가 받은 건수 (보낸 횟수가 아니라 건수다)\n")
+    print("| 변형 | 초당 | 회차 | recv_metrics 값 (회차 수) | recv_traces 중앙값 |")
+    print("|---|---|---|---|---|")
+    for variant, rate in rows_with_recv:
+        got = recv[(variant, rate)]
+        ms = Counter(int(a) for a, _ in got if a != "")
+        tr = [int(b) for _, b in got if b != ""]
+        shape = " · ".join(f"{v}({n}회)" for v, n in sorted(ms.items())) or "없음"
+        trs = f"{median(tr):.0f}" if tr else "없음"
+        print(f"| {variant} | {rate} | {len(got)} | {shape} | {trs} |")
+    print("\n- recv_metrics 가 한 값으로 몰리면 창 안의 전송 횟수가 **치우친 것**이다 (research.md 2.6.2)")
+    print("- 두 값이 섞이면 그 차이가 **전송 1번에 오는 건수 P** 다. P 가 간격마다 같은지가 5절 A 전제 ① 이다")
+    print("- 뗌(off) 회차의 값은 쇼핑몰이 아닌 다른 발신자의 몫이라 **배경값**으로 본다")
