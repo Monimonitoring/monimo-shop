@@ -36,6 +36,9 @@ rotate_rounds() { # $1 = 반복 횟수, $2 = 초당 건수, 나머지 = 이 묶�
 case "$GROUP" in
   interval) rotate_rounds 10 "$RATE" off on interval-30 interval-60 ;;
   rest)     rotate_rounds 5  "$RATE" off instr-min sampling-10 sampling-1 batch-size batch-delay ;;
-  check)    rotate_rounds 5  40      off "${2:?검산할 변형 이름}" ;;
+  # 검산은 이름을 여럿 받는다. 1차 70회차에서 변형끼리 전혀 안 갈렸기 때문이다(폭이 전부 겹쳤다, 2026-10-27).
+  #   그래서 물을 것이 "뗌보다 싼가" 가 아니라 "그대로 둔 것(on)보다 싼가" 로 바뀌었고,
+  #   on 을 대조군으로 같이 넣어야 답이 나온다 : perf/overhead/suite-51.sh check on interval-30
+  check)    shift; rotate_rounds 5 40 off "${@:?검산할 변형 이름(여럿 가능)}" ;;
   *) echo "모르는 묶음: $GROUP (interval · rest · check)" >&2; exit 2 ;;
 esac

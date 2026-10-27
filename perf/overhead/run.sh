@@ -58,7 +58,20 @@ fi
 
 OUT=$(dirname "$CSV")
 mkdir -p "$OUT"
-[ -s "$CSV" ] || echo "time,variant,rate,secs,service,cpu_usec,mem_bytes,reqs,p95_ms,failed,recv_metrics,recv_traces" > "$CSV"
+HEADER="time,variant,rate,secs,service,cpu_usec,mem_bytes,reqs,p95_ms,failed,recv_metrics,recv_traces"
+# 머리가 다른 CSV 에 덧붙이면 열이 밀려 기록이 통째로 못 쓰게 된다. 비었을 때만 쓰는 것으로는 못 막는다 :
+#   `#36` 때 쓴 out/results.csv 가 남아 있으면 그 옛 머리(열 10개)가 유지되고 새 회차만 열 12개로 붙는다 (2026-10-27 실측)
+if [ -s "$CSV" ]; then
+  [ "$(head -1 "$CSV")" = "$HEADER" ] || {
+    echo "CSV 머리가 지금 열과 다르다: $CSV" >&2
+    echo "  있는 것 : $(head -1 "$CSV")" >&2
+    echo "  필요한 것 : $HEADER" >&2
+    echo "  옛 기록이면 다른 이름으로 옮기고 다시 실행한다" >&2
+    exit 1
+  }
+else
+  echo "$HEADER" > "$CSV"
+fi
 
 # up 이 반쯤 실패해도 띄운 것은 내린다
 trap 'compose down >/dev/null 2>&1 || true' EXIT
