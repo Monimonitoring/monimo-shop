@@ -47,6 +47,64 @@ services:
       retries: 30
       start_period: 5s
 
+  # 주문 완료를 알리는 비동기 경로 (#54, backend #259 문제 2). Service map 에 비동기 간선이 나오는 자리다.
+  # backend 의 Kafka 와 **따로 둔다** : 그쪽은 수집 파이프라인의 통로라 감시 대상 앱이 끼어들 자리가 아니다
+  # (토픽 이름이 겹칠 수도 있고, 쇼핑몰을 내려도 파이프라인은 떠 있어야 한다).
+  # 에이전트를 붙이지 않는다 : Kafka 는 미들웨어라 노드가 간선의 callee_kind(MESSAGING)로만 그려진다.
+  # 포트 19094 : backend 의 Kafka 가 19092 를 쓴다 (내 컴퓨터에서 직접 띄운 앱이 헷갈리지 않게)
+  # 이름이 shop-kafka 인 이유 : 공용 네트워크 monimo-dev 에 backend 의 kafka 가 이미 있다. 둘 다 kafka 로 두면
+  # 같은 이름이 두 컨테이너를 가리켜 토픽이 어느 쪽에 생길지 모른다 (실측 2026-10-28 : kafka-init 이 만든
+  # shop.order.completed 가 backend Kafka 에 생겨서 쇼핑몰 쪽은 UNKNOWN_TOPIC_OR_PARTITION 이었다).
+  # Service map 노드 이름은 이 컨테이너 이름이 아니라 스팬의 messaging.system(kafka) 에서 나오므로 영향이 없다
+  shop-kafka:
+    image: apache/kafka:3.9.2
+    ports:
+      - "${SHOP_KAFKA_PORT:-19094}:19094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@shop-kafka:9093
+      # INTERNAL: 컨테이너끼리 (shop-kafka:29092) / EXTERNAL: 내 컴퓨터에서 bootRun 한 앱 (localhost:19094)
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:19094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://shop-kafka:29092,EXTERNAL://localhost:${SHOP_KAFKA_PORT:-19094}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # 토픽은 kafka-init 이 만든다. 오타 난 토픽이 저절로 생기지 않게 막는다 (backend compose 와 같은 이유)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    # "정상" = 브로커가 떴고 토픽이 만들어진 상태. up --wait 이 토픽 준비까지 기다린다
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list 2> /dev/null | grep -qx ${SHOP_ORDER_COMPLETED_TOPIC:-shop.order.completed}"]
+      interval: 5s
+      timeout: 15s
+      retries: 30
+      start_period: 10s
+
+  # 토픽 만들기 (한 번 실행하고 끝나는 컨테이너). Kafka 데이터는 컨테이너 안에만 있어서 down 하면 토픽도 지워진다.
+  # 모양은 backend compose 의 kafka-init 과 같다 : 브로커가 응답할 때까지 기다린 뒤 만든다.
+  # $$ 는 compose 가 아니라 셸이 풀 변수라는 표시다 (compose 는 $ 하나를 자기 변수로 읽는다)
+  shop-kafka-init:
+    image: apache/kafka:3.9.2
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        for i in $$(seq 1 60); do
+          /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server shop-kafka:29092 > /dev/null 2>&1 && break
+          sleep 2
+        done
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server shop-kafka:29092 --create --if-not-exists \
+          --topic ${SHOP_ORDER_COMPLETED_TOPIC:-shop.order.completed} --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server shop-kafka:29092 --list
+    restart: "no"
+    depends_on:
+      shop-kafka:
+        condition: service_started
+
   # 더미 외부 결제사. 진짜 외부 시스템처럼 에이전트를 붙이지 않는다 (Service map 에서 "밖으로 나가는 호출" 노드로 보이게).
   # 응답 정의는 pg-stub/mappings/ 의 JSON (pg-stub/README.md)
   pg-stub:
@@ -120,6 +178,10 @@ services:
       OTEL_RESOURCE_ATTRIBUTES: "service.instance.id=shop-inventory-local-1,deployment.environment.name=local"
       OTEL_MONIMO_AGENT_TOKEN: ${MONIMO_AGENT_TOKEN:-local-agent-token}   # 스레드 덤프 Extension (payment 설명 참고)
       # Redis 는 peer 매핑에 넣지 않는다. 넣으면 Service map 이 Redis 를 DB 가 아니라 우리 서비스로 잘못 그린다 (#32)
+      # 주문 완료 알림을 읽는 자리 (#54). 이 이름이 있을 때만 리스너 빈이 생긴다 (OrderCompletedListener).
+      # Kafka 도 peer 매핑에 넣지 않는다 : 간선 종류가 스팬 종류(CONSUMER)에서 나오고, 넣으면 우리 서비스로 그려진다
+      KAFKA_BOOTSTRAP_SERVERS: shop-kafka:29092
+      SHOP_INVENTORY_COMPLETED_TOPIC: ${SHOP_ORDER_COMPLETED_TOPIC:-shop.order.completed}
     # 에이전트 mTLS (backend #159 · ADR #64). .env 의 MONIMO_OTLP_CERTS_DIR 이 비어 있으면(기본) 없는 파일을 가리켜 아무것도 안 읽고
     # 지금처럼 평문(agent.properties 의 http://collector:4317)이다. 채우면 그 폴더(backend compose 가 monimo-backend/certs 에 만든다)의
     # env/shop-inventory.env 를 읽어 https 주소와 파일 셋(기관 인증서 · 이 서비스의 신분증 · 열쇠)을 받고, 폴더를 /certs 로 읽는다.
@@ -131,6 +193,8 @@ services:
     volumes:
       - ${MONIMO_OTLP_CERTS_DIR:-./otel}:/certs:ro
     depends_on:
+      shop-kafka-init:
+        condition: service_completed_successfully
       mysql:
         condition: service_healthy
       redis:
@@ -163,6 +227,10 @@ services:
       # 비어 있으면 Service map 집계가 주소(payment:8092)를 외부 시스템으로 분류한다(Q20). 호스트 이름이 환경마다 달라 agent.properties 가 아니라 여기 둔다.
       # pg-stub 은 외부 결제사라 일부러 넣지 않는다. Redis · MySQL 도 넣지 않는다 (DB 는 db.system 으로 가려진다)
       OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING: "payment=shop-payment,inventory=shop-inventory"
+      # 주문이 끝나면 토픽에 알린다 (#54). 비어 있으면 아무것도 보내지 않는다 (OrderEventPublisher).
+      # Kafka 는 peer 매핑에 넣지 않는다 (inventory 설명 참고)
+      KAFKA_BOOTSTRAP_SERVERS: shop-kafka:29092
+      SHOP_ORDER_COMPLETED_TOPIC: ${SHOP_ORDER_COMPLETED_TOPIC:-shop.order.completed}
     # 에이전트 mTLS (backend #159 · ADR #64). .env 의 MONIMO_OTLP_CERTS_DIR 이 비어 있으면(기본) 없는 파일을 가리켜 아무것도 안 읽고
     # 지금처럼 평문(agent.properties 의 http://collector:4317)이다. 채우면 그 폴더(backend compose 가 monimo-backend/certs 에 만든다)의
     # env/shop-order.env 를 읽어 https 주소와 파일 셋(기관 인증서 · 이 서비스의 신분증 · 열쇠)을 받고, 폴더를 /certs 로 읽는다.
@@ -174,6 +242,8 @@ services:
     volumes:
       - ${MONIMO_OTLP_CERTS_DIR:-./otel}:/certs:ro
     depends_on:
+      shop-kafka-init:
+        condition: service_completed_successfully
       # 주문은 뜰 때 schema.sql 을 실행하고, 실패하면 기동을 멈춘다(continue-on-error=false). 그래서 MySQL 이 준비된 뒤에 띄운다
       mysql:
         condition: service_healthy

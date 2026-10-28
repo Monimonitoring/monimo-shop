@@ -1,0 +1,702 @@
+# 리서치 : 서버맵이 우리 시스템을 틀리게 그린다 (문제 넷)
+
+- 날짜 2026-10-28 / 관련 이슈 [`#54`](https://github.com/Monimonitoring/monimo-shop/issues/54) (멘토 피드백 D · 「서비스 **수**보다 **간선 종류**를 늘려라」)
+- 쓴 도구 : **화면을 직접 띄워서 봤다**(쇼핑몰 + Collector + Ingester + API server + Detector + web 을 다 켜고 k6 12분) · **API 를 필터 걸고 안 걸고 두 번 불러 비교** · **ClickHouse 직접 조회**(스팬 495만 건의 종류 분포 · 서비스별 · 스팬 계보) · **에이전트 jar 를 풀어 계측 모듈 132개 확인** · backend 레포 읽기(`mv_server_map_1m` · `server_map_1m` · `PeerServiceResolver` · `ServerMapRepository` · `Dockerfile`) · web 레포 `features/server-map/` 넷
+
+- **읽는 순서가 곧 쓰는 순서다**
+  - 1 → 2 를 쓰고 멈춰서 승조가 3 을 묻는다. 답하고 4 를 쓴다
+  - 5 를 쓰고 멈춰서 승조가 6 을 묻는다. 답하고 7 을 쓴다
+  - 8 은 승조가 쓴다
+- **3 · 6 · 8 은 사람 차례다** : 아래 셋은 **2026-10-28 대화에서 승조가 실제로 쓴 말**을 옮긴 것이고 AI 가 지어낸 것이 아니다
+
+---
+
+## 1. 이번 작업은 무엇을 하는 일인가
+
+- **지금 무엇이 잘못됐나** : 서버맵이 **우리 시스템을 있는 그대로 안 그린다**. 화면을 띄워 보니 문제가 넷이었다. 멘토가 짚은 「간선 종류」는 그중 하나였고, 나머지 셋은 보다가 새로 찾았다
+- **그래서 무엇을 만드나** : 네 문제를 고쳐 **서버맵에서 본 그림과 숫자를 믿을 수 있게** 한다
+- **안 하면 어떻게 되나** : 면접관이 「비동기 구간은 어떻게 보나」 물으면 답이 없고, 호출 수를 물으면 **2배로 부푼 숫자**를 보여 주게 된다. 그리고 우리 모듈끼리의 호출이 **밖으로 나가는 호출**처럼 그려진 채로 남는다
+
+### 문제 넷 (승조 정리본)
+
+```
+1. 필터를 걸면 직접 연결 안 된 노드와 간선이 사라짐
+2. 비동기 간선 종류가 없다
+3. CH 부분에서 호출 수가 2배가 되는 문제
+4. Detector → API server 호출이 외부로 그려지는 문제
+```
+
+| | |
+|---|---|
+| 건드리는 모듈 · 파일 | **backend** : `api-server` 조회 한 곳(1번) · `db/clickhouse/` 마이그레이션 한 장(2번) · `compose.yaml` 한 줄(4번) · **web** : `features/server-map/` 노드 모양(2번) · **쇼핑몰** : Kafka 컨테이너 하나 + `order` 보내는 쪽 · `inventory` 읽는 쪽(2번 · 7.2 에서 **B1**) · 이 폴더 문서 넷 |
+| 건드리지 않는 것 | **지금 그려지는 간선 셋을 깨지 않는다**(SERVICE · DB · EXTERNAL) · `spans` 표의 `span_kind`(다섯 종류가 **이미 다 있다**) · `PeerServiceResolver` 의 채우기 규칙 자체 · Collector · Ingester 의 `OTEL_TRACES_EXPORTER=none` |
+| 이 이슈 범위 밖 (후속) | 서비스 **수** 늘리기 · 트레이스 상세 화면의 비동기 표시 · 비동기 구간 경보 규칙 · `#51` 후속 셋 · **남의 앱이 HTTP 로 말하는 DB 를 쓸 때의 2배 세기**(우리가 그 앱 설정을 못 고친다, 3번 뒤에 남는 질문) |
+
+**조사 들어가기 전에 내가 알던 것 (세 줄)**
+
+- 서버맵은 **`mv_server_map_1m` 이 1분 단위로 접어 둔 표**를 조회가 읽는다. 원본 `spans` 를 직접 읽지 않는다
+- `#32` 에서 **Redis 와 pg-stub 을 peer 매핑에 일부러 안 넣었다** : 넣으면 우리 서비스로 잘못 그려진다. 그래서 DB · EXTERNAL 로 나온다
+- `#51` 에서 **서비스를 하나 늘리면 에이전트 몫으로 메모리 75 ~ 126MB** 가 붙는다
+
+**알고 싶었던 것** (다섯)
+
+- ① **지금 정말 몇 종류가 그려지나** : 멘토가 든 셋(Kafka 비동기 · Redis · 외부 API) 중 무엇이 되고 무엇이 안 되나
+- ② **안 되는 것이 데이터가 없어서인가 코드 때문인가** : 쇼핑몰만 고치면 되나, 백엔드도 고쳐야 하나
+- ③ **우리 백엔드에 이미 Kafka 가 있는데 왜 안 보이나**
+- ④ **비동기 간선은 어떤 모양이어야 하나** : HTTP 는 한 스팬에 양쪽이 다 있는데 Kafka 는 보낼 때 받는 쪽을 모른다 (7.2 에서 **D1** 로 닫혔다)
+- ⑤ **서비스를 새로 만들어야 하나** : 만들면 메모리가 서비스당 75 ~ 126MB 붙는다 (7.2 에서 **안 만든다**로 닫혔다)
+
+## 2. 작업하기 전에 알아야 하는 것
+
+### 2.1 서버맵 한 간선이 어디서 만들어지나
+
+```
+[에이전트]  요청마다 스팬을 만든다
+              span_kind = SERVER · CLIENT · INTERNAL · PRODUCER · CONSUMER
+                 ↓ OTLP
+[Collector]  받아서 Kafka raw 로 넘긴다
+                 ↓
+[Ingester]   peer_service 가 비면 주소에서 채운다 (PeerServiceResolver)
+                 ↓ INSERT
+[spans]      원본. 트레이스 상세 화면이 이걸 읽는다
+                 ↓ mv_server_map_1m  ← INSERT 될 때마다 자동으로 접는다
+[server_map_1m]  1분 단위 간선 표
+                 ↓ ServerMapRepository
+[화면]       서버맵
+```
+
+- **서버맵은 원본이 아니라 접은 표를 읽는다** : `FROM server_map_1m` (코드로 확인)
+- **트레이스 상세는 원본을 읽는다** : `FROM spans`
+- 그래서 **접을 때 버린 것은 서버맵에서 영영 안 보인다** · 조회가 나중에 못 고친다
+
+### 2.2 지금 그려지는 간선 종류는 셋이다
+
+`mv_server_map_1m` 의 분류 식 그대로다.
+
+| 종류 | 조건 | 쇼핑몰에서 무엇 |
+|---|---|---|
+| `SERVICE` | `peer_service` 가 차 있다 | gateway → order · gateway → inventory · order → payment · order → inventory |
+| `DB` | `peer_service` 는 비었고 `attributes['db.system']` 이 있다 | order → MySQL · inventory → MySQL · **inventory → Redis** |
+| `EXTERNAL` | 둘 다 아니다 | **payment → pg-stub** |
+
+**실측으로 확인했다** (2026-10-27 · 쇼핑몰을 띄우고 k6 12분 · 필터 없이 API 호출)
+
+| 호출자 | 피호출자 | 종류 | 건수 |
+|---|---|---|---|
+| shop-gateway | shop-order | SERVICE | 15,940 |
+| shop-gateway | shop-inventory | SERVICE | 7,991 |
+| shop-order | shop-payment | SERVICE | 15,979 |
+| shop-order | shop-inventory | SERVICE | 15,979 |
+| shop-order | mysql:3306 | DB | 31,959 |
+| shop-inventory | mysql:3306 | DB | 55,458 |
+| **shop-inventory** | **redis:6379** | **DB** | 31,490 |
+| **shop-payment** | **pg-stub:8080** | **EXTERNAL** | 15,979 |
+
+- **멘토가 든 셋 중 둘은 이미 된다** : Redis(DB) · 외부 API(EXTERNAL)
+- `shop-payment` 에 DB 간선이 없는 것은 **정상**이다 : `#32` 가 MySQL 을 inventory 로 옮겨서 payment 는 DB 를 안 쓴다 (`PgClient` 하나뿐)
+- **쇼핑몰 쪽은 빠진 것이 없다**
+
+### 2.3 문제 1 : 필터를 걸면 이웃의 의존이 사라진다
+
+같은 시간 창으로 API 를 두 번 불러 비교했다.
+
+| 부르는 법 | 간선 |
+|---|---|
+| 필터 없음 | **13개** |
+| `service_name=shop-order` | **4개** |
+
+필터를 거는 서비스마다 사라지는 것이 다르다.
+
+| 필터 | 사라지는 것 |
+|---|---|
+| `shop-order` | inventory 의 MySQL · Redis · payment 의 pg-stub |
+| `shop-inventory` | order 의 MySQL · payment 노드 자체 |
+| `shop-payment` | order 의 MySQL · inventory 전부 |
+| `shop-gateway` | **DB 가 한 개도 안 보인다** |
+
+**원인** : 조회가 **한 겹만** 본다
+
+```kotlin
+AND (caller_service = :serviceName OR callee_service = :serviceName)
+```
+
+- 고른 서비스의 **이웃은 노드로 그려지는데 그 이웃의 의존은 안 따라온다**
+- 그래서 **쇼핑몰이 DB 를 안 쓰는 것처럼** 보인다
+- **화면이 이 필터를 쓴다** : `const serviceName = useServiceName()` → 상단바에서 고른 서비스가 그대로 조회 조건이 된다 (주소에도 `?service=...` 로 남는다)
+
+### 2.4 문제 2 : 비동기 간선 종류가 없다
+
+**스팬 종류는 이미 다 있다**
+
+```sql
+span_kind Enum8('INTERNAL'=0,'SERVER'=1,'CLIENT'=2,'PRODUCER'=3,'CONSUMER'=4)
+```
+
+**막히는 자리가 셋이다**
+
+| 자리 | 지금 | 어디 |
+|---|---|---|
+| ① **집계** | `WHERE span_kind = 'CLIENT'` | backend `V202609221907__create_materialized_views.sql` |
+| ② **간선 종류 칸** | `callee_kind Enum8('SERVICE','DB','EXTERNAL')` | backend `server_map_1m` |
+| ③ **화면 노드 모양** | `nodeTypes = { SERVICE, DB, EXTERNAL }` | web `ServerMapGraph.tsx` |
+
+**그리고 셀 데이터가 없다**
+
+| `span_kind` | 건수 |
+|---|---|
+| `INTERNAL` | 2,816,215 |
+| `CLIENT` | 2,003,970 |
+| `SERVER` | 133,232 |
+| **`PRODUCER`** | **0** |
+| **`CONSUMER`** | **0** |
+
+- 495만 건 중 비동기 스팬이 **한 건도 없다** → ①을 고쳐도 당장 보일 간선이 없다
+
+**우리 백엔드에 이미 Kafka 가 있는데 0건인 이유** : 일부러 껐다
+
+```
+Dockerfile
+  collector 단계 : ENV OTEL_TRACES_EXPORTER=none
+  ingester  단계 : ENV OTEL_TRACES_EXPORTER=none
+```
+
+- `#213` 이 적은 이유 : **「자기 스팬이 자기 입력으로 돌아오는 되먹임」**
+- 최근 7일 스팬에 `api-server` · `detector` · `notifier` 만 있고 **Collector · Ingester 는 0건**으로 확인했다
+
+**Kafka 간선은 HTTP 간선과 모양이 다르다**
+
+```
+HTTP : 한 스팬이 간선을 통째로 안다
+  service_name = shop-order · peer_service = shop-payment
+
+Kafka : 보낼 때 받는 쪽을 모른다
+  PRODUCER  service_name = shop-order · server.address = kafka:9092 (브로커다)
+  CONSUMER  service_name = shop-???   · 같은 토픽
+```
+
+- `PeerServiceResolver` 는 **이미 PRODUCER 를 호출자로 다룬다** (`CALLER_KINDS = setOf("CLIENT","PRODUCER")`)
+- 그런데 주소가 **브로커**라 감시 대상 이름과 안 맞아 `peer_service` 가 비고 **EXTERNAL 로 그려질 것**이다
+
+### 2.5 문제 3 : ClickHouse 호출 수가 2배로 세어진다
+
+**쿼리 하나가 스팬 둘을 만든다**
+
+| 스팬 이름 | `db.system` | 분류 | 건수 |
+|---|---|---|---|
+| `SELECT monimo…` | `clickhouse` | **DB** | 106,839 |
+| `POST` | **비어 있다** | **EXTERNAL** | 108,347 |
+
+**스팬 계보로 확인했다** (둘은 부모 자식이다)
+
+```
+b7a254ac  CLIENT  SELECT monimo   db=clickhouse   clickhouse:8123   ← 부모
+  eade3b22  CLIENT  POST          db=(없음)        clickhouse:8123   ← 자식
+```
+
+**왜 ClickHouse 만 그런가**
+
+```
+ClickHouse 조회
+  jdbcTemplate.query(...)
+    └ Statement.executeQuery()      ← jdbc 계측 모듈   → 스팬 ① (부모)
+        └ HttpClient.execute(...)   ← apachehttpclient 계측 모듈 → 스팬 ② (자식)
+            └ 소켓에 바이트 쓰기     ← 계측 모듈 없음
+
+MySQL 조회
+  jdbcTemplate.query(...)
+    └ Statement.executeQuery()      ← jdbc 계측 모듈   → 스팬 ①
+        └ 드라이버가 소켓에 직접 쓰기 ← 계측 모듈 없음  → 스팬 없음
+```
+
+- **이유는 서버가 받는 말이 다르기 때문이다**
+
+| 저장소 | 서버가 받는 말 | 드라이버가 하는 일 | 스팬 |
+|---|---|---|---|
+| MySQL · PostgreSQL | 전용 말 | 통신 코드를 직접 짰다 | 1 |
+| Redis (Lettuce) | 전용 말 | Netty 를 쓰지만 HTTP 가 아니다 | 1 |
+| **ClickHouse** | **HTTP (8123)** | **이미 있는 HTTP 라이브러리를 가져다 쓴다** | **2** |
+
+- 의존 목록으로 확인했다 : `clickhouse-jdbc` → `clickhouse-http-client` → `org.apache.httpcomponents.client5:httpclient5`
+- **에이전트 jar 를 풀어 계측 모듈 132개를 확인했다** : `jdbc` · `apachehttpclient/v5_0` · `lettuce` 는 있고 **소켓을 대상으로 하는 것은 없다**
+- `netty` 계측 모듈은 있지만 안의 클래스가 **전부 `Http*`** 다 → Lettuce 가 보내는 Redis 전용 바이트에는 안 뜬다 (Redis 가 1개인 이유)
+- **ClickHouse 에도 전용 문이 있다** : compose 가 `18123:8123`(HTTP)과 `19000:9000`(전용)을 둘 다 연다. 우리는 HTTP 쪽에 붙어 있다
+
+**무엇이 문제인가**
+
+- 화면은 **이름으로 노드를 합치므로** ClickHouse 노드는 하나로 보인다
+- 그런데 **건수가 더해진다** → 쿼리 10만 번을 **20만 번**으로 센다
+- 노드 모양도 먼저 온 쪽이 이겨 DB 원통일 때도 외부 점선일 때도 있다
+- **남의 앱이 HTTP 로 말하는 저장소**(Elasticsearch · OpenSearch · S3 · 클라우드 DB)를 쓰면 **똑같이 2배로 센다**
+
+### 2.6 문제 4 : 같은 서비스가 서버맵에 두 번 그려진다
+
+```
+Detector 가 부르는 주소 : api-server:8080
+등록된 서비스 이름      : monimo-api-server
+PeerServiceResolver 규칙 : 주소 첫 라벨이 서비스 이름과 "정확히 같을 때만" 채운다
+  "api-server" ≠ "monimo-api-server"  → 안 채움 → EXTERNAL
+```
+
+**실측**
+
+| 간선 | 종류 | 건수 |
+|---|---|---|
+| `monimo-detector → api-server:8080` | **EXTERNAL** | 31,458 |
+
+- 등록된 이름 목록도 확인했다 : `monimo-api-server` · `monimo-collector` · `monimo-detector` · `monimo-ingester` · `monimo-notifier` · `shop-*` 넷
+- 서버맵에 API server 가 **두 번** 나온다 : `monimo-api-server`(서비스 카드) · `api-server:8080`(외부 점선)
+- **우리 모듈끼리의 호출이 밖으로 나가는 호출처럼 보인다**
+- 쇼핑몰은 안 그렇다 : 컨테이너 이름 `shop-order` 와 서비스 이름 `shop-order` 가 **같다**
+
+### 2.7 왜 우리 백엔드에 에이전트가 붙어 있나 (문제 3 · 4 를 찾은 배경)
+
+- `ADR #01` · `FR-7` · `#208` 이 정한 **도그푸딩**이다
+- 설계 문서가 경쟁 팀과 비교하며 적어 뒀다 : 「다른 것은 **도그푸딩** · Watchdog · 카나리뿐이다」 · 「자기 감시를 남에게 위탁하면 **도그푸딩 · Watchdog 이 사라진다**」
+- **문제 3 · 4 는 쇼핑몰만 봤으면 못 찾았다** : 쇼핑몰은 MySQL · Redis 라 스팬이 1개씩이고 이름이 맞아떨어진다
+
+### 2.8 지금 값 (레포에서 읽은 것)
+
+| 무엇 | 지금 | 어디 |
+|---|---|---|
+| 집계가 읽는 `span_kind` | `CLIENT` 하나 | backend `V202609221907__create_materialized_views.sql` |
+| 간선 종류 칸 | `Enum8('SERVICE'=0,'DB'=1,'EXTERNAL'=2)` | backend `server_map_1m` |
+| 스팬 종류 칸 | 다섯 종류 **이미 있다** | backend `spans` |
+| 필터 조건 | `caller = :name OR callee = :name` | backend `ServerMapRepository.findEdges` |
+| 노드 목록 출처 | `service_health_1m` | backend `ServerMapRepository.findNodes` |
+| 화면 노드 모양 | `{ SERVICE, DB, EXTERNAL }` | web `ServerMapGraph.tsx` |
+| ClickHouse 접속 | `jdbc:clickhouse://…:18123` (**HTTP 문**) | backend `application-local.yml` |
+| ClickHouse 가 여는 문 | `8123` HTTP · `9000` 전용 | backend `compose.yaml` |
+| 쇼핑몰 Kafka | **없다** | shop `docker-compose.dev.yml` |
+| 서비스 하나당 에이전트 메모리 | +75 ~ 126MB | shop `#51` `results.md` |
+
+### 2.9 선례 : 간선을 건드린 일이 두 번 있었다
+
+- **`#32`(재고 Redis)** : Redis 를 peer 매핑에 **안 넣기로** 정했다. **잘못 그려지는 것보다 안 그려지는 것이 낫다**는 판단이었다
+- **backend `#92`(헬스체크 거르기)** : 헬스체크 SERVER 스팬을 버려도 **그 안의 CLIENT 스팬이 서버맵에 헬스체크 발 간선**을 만든다 (backend `AGENTS.md` §6 에 열린 행)
+  - **PRODUCER · CONSUMER 를 집계에 넣으면 걸러야 할 스팬이 늘어난다** · 같은 모양의 위험이다
+
+### 2.10 낱말 정리
+
+| 낱말 | 한 줄 |
+|---|---|
+| **드라이버** | 우리 코드가 DB 와 말할 수 있게 해 주는 라이브러리 |
+| **계측 모듈** | 에이전트가 특정 라이브러리의 특정 메서드에 끼워 넣는 「여기 지나가면 스팬 하나 만들어라」 코드 |
+| **지나간다** | 그 메서드가 실제로 불린다 |
+| **접는다** | 원본 스팬을 1분 단위로 묶어 간선 표를 만든다 (`mv_server_map_1m`) |
+
+---
+
+## 3. 1차 질문 (사람 차례)
+
+2026-10-28 대화에서 승조가 실제로 쓴 말이다. 맞춤법도 그대로 둔다.
+
+```
+이거 간선 늘리는게 서비스 멥에서 생기는 거고
+그리고 쇼핑몰 쪽에서의 데이터를 모니터링 쪽에서 보고 그걸 모니터링 서비스의 대시보드에 보여주는 것인 것으로 알고 있는데
+왜 모니터링 쪽 부분을 생각해야하는 거지? 내가 잘못알고 있는 건가?
+```
+
+```
+쇼핑몰에 비동기 경로를 만든다는게 왜 필요한거지?
+접는 규칙이라는게 MV로 집계된 CH 테이블을 말하는 거지?
+이걸 사용하는 이유가 매분당 데이터를 MV에 쌓아두고 그걸 조회하는 방식으로 서비스 맵을 만드는 거 같은데
+지금 문제가 현재 서비스 맵에서 우리가 만든 서비스인 쇼핑몰 서비스 부분 이쪽의 모든 서비스가 보여져야하는데
+그렇지 않는 모습을 보여주고 있는 거 같다는 피드백 인거 같은데 그거 맞나?
+```
+
+```
+문제 1은 필터를 걸면 사라지는 노드들이 있다는 거고
+우리 서비스는 우리 서비스의 상태도 확인 가능하니까 비동기 간선도 필요하다는 거지?
+즉 모니터링 서비스에 카프카를 사용하고 있으니까 그걸 표현할 것이 필요하다 ?
+데이터 만드는 건 어떤 데이터를 만든다는 거지?
+```
+
+```
+이거 왜 CH에는 2번이 되는 지 조금만 더 쉽게 설명해줘
+```
+
+```
+즉 조회할 때 api-server 속 에이전트가 두겹을 본다는데
+저 스팬중에서 부모스팬은 무조건 JDBC이고 그 아래가 DB 마다 다른 규격이면 왱 HTTP 만 세는ㄴ 거지?
+그리고 왜 api-server 에 에이전트가 있는 거지?
+```
+
+```
+조회할 때 사용하는 드라이버가 JDBC이라서 까지는 알겠는데
+왜 HttpClient5만 자식스팬이 생기는 거지? 나머지는 스팬이 안생긱고?
+```
+
+```
+계측 모듈, 드라이버, 지나간다 등을 각각 한 줄로 설명해줘
+너무 어렵게 자꾸 설명해주는 거 같아
+```
+
+```
+근데 왜 CH만 JDBC 드라이버 1개 + HTTP 라이브러리 1개 이거지?
+```
+
+```
+여기 에서 또 다른 문제가 뭐였지?
+```
+
+```
+1,2 번 해결방법은?
+```
+
+## 4. 1차 정리
+
+### 4.1 확실해진 것
+
+- **쇼핑몰 쪽 서버맵은 멀쩡하다** : 서비스 넷 · MySQL · Redis · 외부 결제사가 **필터만 풀면 전부 나온다** (실측)
+- **멘토가 든 셋 중 둘은 이미 된다** : Redis(DB) · 외부 API(EXTERNAL). 없는 것은 **비동기 하나**다
+- **서버맵은 원본이 아니라 접은 표를 읽는다** : 접을 때 버린 것은 조회가 못 살린다. 그래서 **쇼핑몰만 고쳐서는 비동기 간선이 안 보인다**
+- **문제가 넷이다** : 멘토가 짚은 비동기(2번) 말고 셋을 화면을 보다가 찾았다
+- **2 · 3 · 4 는 전부 「에이전트가 만든 스팬을 집계가 어떻게 세느냐」 문제**다. 쇼핑몰 코드 문제가 아니다
+
+### 4.2 고쳐 적은 것 (내가 틀렸던 것 셋)
+
+- **「Redis · 외부 API 간선이 없다」고 한 것은 틀렸다** : 10-15 회차 하나만 보고 단정했다. 원인은 둘이었다
+  - **Ingester 를 안 띄웠다** : `#51` 측정 스팬이 Kafka 에 머물러 ClickHouse 까지 안 왔다
+  - 남은 10-15 회차가 **재고 조회를 안 밟았다**
+- **「`payment → mysql` 이 없는 것이 결함」이라고 한 것도 틀렸다** : `#32`(`60b8864`)가 MySQL 을 inventory 로 옮겨서 payment 는 **원래 DB 를 안 쓴다**
+- **「지도」 · 「서비스맵」이라는 말을 썼다** : 화면과 코드와 `glossary.md` 가 전부 **서버맵**이다. 이 문서는 서버맵으로 통일한다
+
+### 4.3 아직 모르는 것
+
+- **비동기 간선을 어떤 모양으로 그릴지** : 두 간선으로 쪼갤지 · 토픽으로 이을지 · 트레이스 문맥으로 이을지 (5절 D)
+- **남의 앱이 HTTP 로 말하는 DB 를 쓸 때** 2배 세기를 어떻게 막을지 : 우리가 그 앱 설정을 못 고친다
+- **PRODUCER · CONSUMER 를 집계에 넣으면 걸러야 할 스팬이 얼마나 늘지** (`#92` 선례)
+
+> 이 절은 **1차 정리 시점(6절 앞)** 의 기록이라 그대로 둔다. 첫 줄은 7.2 에서 **D1** 으로 닫혔다
+
+## 5. 선택지와 설명
+
+### 5.A 문제 1 (필터) 을 어떻게 고치나
+
+| 안 | 어떻게 | 장점 | 단점 |
+|---|---|---|---|
+| **A1 두 번 질의** | ① 이웃 목록을 뽑고 ② 그 이웃이 호출자인 간선을 더 가져온다 | SQL 이 읽기 쉽다 | 질의가 둘이 된다 |
+| **A2 한 번에** | 서브쿼리로 이웃 집합을 만들어 `caller IN (이웃)` 을 더한다 | 왕복 한 번 | SQL 이 길어진다 |
+| A3 화면에서 거른다 | 전체를 받아 화면이 걸러 그린다 | 서버 변경 없음 | 서비스가 많아지면 받는 양이 는다 |
+
+- **되돌림** : 서비스가 수십 개가 되면 두 겹도 넓다 → 깊이를 설정으로 뺀다
+
+### 5.B 문제 2 (비동기) 의 데이터를 어디서 만드나
+
+| 안 | 어디 | 비용 | 걸리는 것 |
+|---|---|---|---|
+| **B1** | **쇼핑몰 기존 서비스 둘 사이에 Kafka 토픽** (예 : `order` → 토픽 → `inventory` 뒤처리) | Kafka 컨테이너 하나 | **서비스가 안 늘어난다** · 멘토의 「수보다 종류」와 맞는다 |
+| B2 | 쇼핑몰에 서비스를 하나 더 만든다 | **메모리 +75 ~ 126MB** (`#51`) | 멘토가 그게 아니라고 했다 |
+| B3 | 백엔드 Ingester 트레이스만 켠다 | **코드 0줄** | `#213` 이 되먹임 때문에 끈 것을 다시 들인다 |
+
+### 5.C 문제 3 (2배 세기) 을 어떻게 고치나
+
+| 안 | 어떻게 | 걸리는 것 |
+|---|---|---|
+| **C1** | **ClickHouse 접속을 전용 문(9000)으로** | 설정 한 줄 · 드라이버 동작이 바뀌어 성능 · 호환 확인이 필요 |
+| C2 | 집계에서 **부모가 DB 스팬인 CLIENT 를 뺀다** | 부모를 보려면 집계가 무거워진다 · **남의 앱에도 듣는다** |
+| C3 | 그 HTTP 계측 모듈만 끈다 | 진짜 외부 HTTP 호출도 같이 사라질 수 있다 |
+| C4 | `db.system` 도 `peer_service` 도 없고 부모가 CLIENT 면 버린다 | 규칙이 늘어난다 |
+
+- **C1 은 우리 앱만 고친다** · 남의 앱은 못 고친다 → **C2 계열이 같이 필요할 수 있다**
+
+### 5.D 비동기 간선을 어떤 모양으로 그리나
+
+| 안 | 간선 | 필요한 것 | 걸리는 것 |
+|---|---|---|---|
+| **D1** | `order → kafka` + `kafka → consumer` | CONSUMER 도 집계에 넣고 **받는 쪽을 호출자로 뒤집어** 읽는다 | Kafka 노드가 하나 생긴다 · 토픽이 여럿이면 뭉친다 |
+| D2 | `order → consumer` (토픽은 간선 이름표) | PRODUCER · CONSUMER 를 **토픽으로 조인** | 1분 집계 안에서 짝이 안 맞을 수 있다 · MV 하나로는 안 된다 |
+| D3 | `order → consumer` | Kafka 헤더의 `trace_id` 로 잇는다 | 서버맵은 **1분 접기**지 트레이스 단위가 아니다 |
+
+### 5.E 문제 4 (이름) 을 어디서 맞추나
+
+| 안 | 어떻게 | 비용 |
+|---|---|---|
+| **E1** | compose 에 **이름 짝 한 줄** : `OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING: "api-server=monimo-api-server"` | 한 줄 · **쇼핑몰이 이미 쓰는 방법** |
+| E2 | 컨테이너 이름을 `monimo-api-server` 로 | 주소를 쓰는 곳을 전부 고친다 |
+| E3 | 서비스 이름을 `api-server` 로 | 등록 이름 · 쌓인 기록이 전부 바뀐다 |
+| E4 | `PeerServiceResolver` 를 느슨하게 | **그 코드가 일부러 거부한다** : 「부분 일치 · 별칭은 안 한다 · 틀리게 맞추면 가짜 간선이 생긴다」 |
+
+### 5.F 이번 범위를 어디까지 하나
+
+| 안 | 범위 | 이유 |
+|---|---|---|
+| F1 | 1 · 2 만 | 멘토 피드백 D 가 가리킨 것 · 남의 앱에도 생기는 문제 |
+| **F2** | **1 · 2 · 4** | 4번은 compose 한 줄이라 거의 공짜다 · 지금 서버맵이 거짓말을 하고 있다 |
+| F3 | 넷 다 | 3번은 ClickHouse 접속을 바꾸는 일이라 시험이 붙는다 |
+
+## 6. 2차 질문 (사람 차례)
+
+2026-10-28 에 승조가 문제와 해결을 직접 정리해 보낸 것이다. 원문 그대로 둔다.
+
+```
+[서버 맵 이슈]
+필터를 걸면 직방이 아닌 연관 관계에 속한 노드와 간선이 사라짐
+=> 필터를 한 겹 더하기
+e.g. 지금 : shop-order 가 끼어 있는 간선만 가져와 
+-> inventory 의 MySQL, payment 의 pg-stub 다 가져와
+
+비동기 간선 종류의 없다
+우리 쇼핑몰 A는 전부 동기지만 타 서비스의 경우에는 비동기를 사용할 수 있기에
+=> 집계 : CLIENT 뿐만 아니라 PRODUCER도 읽도록 
+=> 간선 종류칸 : 메시징 값 하나 추가
+=> 화면 노드 모양 : 비동기용 화면 추가 
+=> 비동기 경로 하나 만들면 PRODUCER CONSUMER 스팬을 자동으로 만들도록
+
+CH 부분에서 호출 수가 2배가 되는 문제
+CH 관련 쿼리 하나가 스팬 두 개를 만드는 일이 발생
+ CH: 조회 시 드라이버 + HTTP 라이브러리 1개
+현재 CH가 HTTP로 통신해서 기존에 있는 HTTP 라이브러리를 사용해서 DB에 접근 그래서 데이터 까지 도착하는 데 2개의 계측 모듈을 지나니까 스팬이 2개 생김
+다른 것 : 조회 시 드라이버 1개
+추가적인 라이브러리를 안붙였기에 스팬이 하나 생김 
+=> CH 접속을 CH 전용 포트로 수정 
+드라이버 : 우리 코드가 DB 와 말할 수 있게 해 주는 라이브러리
+ 계측 모듈 : 여기 지나가면 스팬 하나 만들어라 코드
+ 
+Detector → API server 호출이 외부로 그려지는 문제
+Detector 가 부르는 주소 : api-server:8080
+등록된 서비스 이름 : monimo-api-server
+위 글자가 달라서 서버맵에서 따로 그려졌다 
+=> 이름을 하나로 통일 (compose에 짝을 지어서)
+e.g. compose 에 "api-server=monimo-api-server"
+```
+
+## 7. 2차 정리
+
+### 7.1 6절에서 정해진 것 (해결 방향 넷)
+
+| 문제 | 정해진 해결 | 5절 어느 안인가 |
+|---|---|---|
+| 1 필터 | 필터를 **한 겹 더** 넓힌다 | A1 또는 A2 (**둘 중 어느 것인지는 3단계에서 고른다**) |
+| 2 비동기 | 집계 · 간선 종류 칸 · 화면 셋을 고치고 **비동기 경로를 하나 만든다** | 자리는 정해졌고 어디에 만들지는 7.2 에서 정했다 |
+| 3 CH 2배 | **ClickHouse 전용 포트로 바꾼다** | **C1** |
+| 4 이름 | **compose 에 이름 짝 한 줄** | **E1** |
+
+### 7.2 2026-10-28 에 추가로 정한 것 셋
+
+6절 뒤에 B · D · F 를 물어 정했다. 원문은 8절에 있다.
+
+| 무엇 | 고른 것 | 왜 |
+|---|---|---|
+| **비동기 스팬을 어디서 만드나** | **B1 : 쇼핑몰 안에 Kafka 토픽 하나** (`order` 가 주문 완료를 쓰고 `inventory` 가 읽어 뒤처리) | 서비스 수가 안 는다 (멘토의 「수보다 종류」) · 감시 대상 앱 쪽에서 생겨 `#213` 되먹임이 없다 · 데모에 보여줄 것이 생긴다 |
+| **비동기 간선을 어떤 모양으로** | **D1 : `order → kafka` + `kafka → inventory` 간선 둘 · Kafka 노드 하나** | 지금 집계 틀(INSERT 때마다 도는 MV)을 그대로 쓴다 · 보내는 쪽이 느린지 읽는 쪽이 느린지 간선이 둘이라 갈린다 |
+| **이번 범위** | **F3 : 넷 다** | 6절 원문이 넷을 다 적었고 7.3 의 8단계로 1단계부터 들어가는 것에 동의했다 |
+
+- **B2 를 버린 이유** : 서비스를 하나 더 만들면 메모리가 **+75 ~ 126MB** 늘고(`#51` 실측) 멘토가 지적한 자리로 되돌아간다
+- **B3 를 버린 이유** : 코드 0줄이지만 `#213` 이 되먹임 고리 때문에 끈 것을 다시 들이는 일이라 그 자체로 결정 문서가 필요하다
+- **D2 · D3 를 버린 이유** : 둘 다 **다른 스팬을 찾아봐야** 짝을 짓는데 `mv_server_map_1m` 은 INSERT 때마다 도는 트리거라 다른 스팬을 못 본다
+- **Kafka 노드는 고른 결과가 아니다** : PRODUCER 스팬은 받는 쪽을 Kafka 로만 알고 CONSUMER 스팬은 보낸 쪽을 Kafka 로만 안다. 어느 스팬에도 「order → inventory」가 안 적혀 있어 **어쩔 수 없이 남는 자리**다
+- **비동기임을 표시하는 것은 Kafka 노드가 아니라 둘이다** : `callee_kind` 의 메시징 값 · 화면 노드 모양. 이 둘은 D2 로 갔어도 그대로 필요하다
+
+### 7.3 구현 순서 (F3 : 넷 다)
+
+| 단계 | 어디 | 무엇 | 상태 |
+|---|---|---|---|
+| 1 | backend `compose.yaml` | 이름 짝 한 줄 `api-server=monimo-api-server` (문제 4) | 남음 |
+| 2 | backend `application*.yml` | ClickHouse 접속을 9000 으로 · 왕복 시험 (문제 3) | 남음 |
+| 3 | backend `ServerMapRepository` | 필터를 두 겹으로 (문제 1) · **A1 · A2 를 여기서 고른다** · 테스트 | 남음 |
+| 4 | 쇼핑몰 | Kafka 컨테이너 하나 + `order` 보내는 쪽 · `inventory` 읽는 쪽 (문제 2 · B1) | 남음 |
+| 5 | backend `db/clickhouse/` | `callee_kind` 에 메시징 값 추가 + MV 가 **PRODUCER · CONSUMER 도** 읽게 (CONSUMER 는 두 칸을 뒤집는다) (문제 2 · D1) | 남음 |
+| 6 | web `features/server-map/` | 비동기 노드 모양 (문제 2) | 남음 |
+| 7 | 전체 | 화면을 띄워 넷이 다 고쳐졌는지 눈으로 확인 | 남음 |
+| 8 | 문서 | `results.md` · `README.md` · `AGENTS.md` §5 · §6 · 이 문서 9절 | 남음 |
+
+- **1 · 2 는 backend 쪽이고 작다** · 3 은 조회 코드 한 곳 · **4 ~ 6 이 비동기 본체다**
+- **2 번은 시험이 붙는다** : 전용 포트로 바꾸면 드라이버 동작이 달라져 기존 조회가 다 도는지 봐야 한다
+- **4 번이 5 번보다 앞이다** : 스팬이 안 들어오면 5 · 6 을 고쳐도 고쳐졌는지 확인할 수 없다 (지금 PRODUCER · CONSUMER 가 495만건 중 0건이다)
+- **레포가 셋으로 갈린다** : 1 · 2 · 3 · 5 는 backend · 4 는 shop · 6 은 web. PR 도 갈린다
+
+### 7.4 되돌림 조건
+
+- **필터 두 겹이 너무 넓어지면** : 서비스가 수십 개가 되면 깊이를 설정으로 뺀다
+- **ClickHouse 전용 포트가 문제를 일으키면** : HTTP 로 되돌리고 집계 쪽(C2)으로 간다
+- **비동기 간선이 Kafka 노드로 뭉쳐 읽기 어려우면** : D1 에서 D2 로 옮긴다
+- **PRODUCER 를 집계에 넣어 가짜 간선이 늘면** : `#92` 처럼 거르는 규칙을 더한다
+
+### 7.5 면접에서 물어볼 만한 것 다섯
+
+- 서버맵은 왜 원본이 아니라 접은 표를 읽나 · 접을 때 버린 것은 왜 못 살리나
+- 같은 쿼리가 스팬 둘이 되는 것을 어떻게 알아챘나 · 왜 ClickHouse 만 그런가
+- 비동기 간선은 왜 동기 간선과 같은 방법으로 못 그리나
+- 우리 백엔드에 에이전트를 붙인 것이 어떤 값을 했나
+- 이름이 안 맞아 외부로 그려지는 것을 왜 코드로 느슨하게 안 고치나
+
+## 8. 구현 프롬프트 (사람 차례)
+
+2026-10-28 승조가 쓴 그대로다. 맞춤법 · 띄어쓰기도 고치지 않는다.
+
+```
+오케이 이제 문제 이해 완료 이거 토대로 research.md 수정해주고 이거 토대로
+(위 6절 원문)
+8번 까지 전부 작성할 수 있지 않나? 그럼 작성해줘
+```
+
+```
+(6절 원문 다시 붙임)
+ 이 내용이 지금 8절에 들어간 거고 그거 대로 구현 하면 되는 건가?
+```
+
+```
+B랑 D가 뭔 지 알려줘봐
+```
+
+```
+B1은 카프카를 추가하자고 쇼핑몰에
+D1은 비동기니까 두 개로 나눠서 간선을 만들고 카프카 노드 하나 추가해서 비동기임을 보여주자는거지?
+```
+
+```
+어어 그럼 확정하고 프롬프트 부터 업데이트 하자
+```
+
+### 8.1 이 프롬프트들이 7절에서 닫은 것
+
+- **B1 · D1 · F3 이 확정됐다** : 7.2 에 근거까지 적었다
+- **남은 결정은 하나다** : 필터를 A1(두 번 질의) 로 넓힐지 A2(서브쿼리) 로 넓힐지. 3단계에서 그 코드를 열어 보고 고른다
+
+### 8.2 원문에 없어서 내가 정한 것 넷 (구현 전에 승조가 확인할 것)
+
+- **3 · 6 · 8절을 이 대화의 승조 말로 채운 것** : 그 셋은 사람 차례라 AI 가 지어내면 안 되는 자리다. 지어내지 않고 **실제로 쓴 말을 옮겼다**
+- **범위를 F3(넷 다)로 읽은 것** : 6절 원문이 넷을 다 적었고 7.3 의 8단계 순서로 1단계부터 들어가는 것에 동의했다. **「넷 다」라고 명시한 말은 없다**
+- **구현 순서를 「작은 것부터」로 둔 것** : 이름 짝 → 전용 포트 → 필터 → 비동기 본체. 비동기가 가장 크고 레포가 셋으로 갈려 뒤로 뺐다
+- **4단계를 5단계 앞에 둔 것** : 스팬이 안 들어오면 집계와 화면을 고쳐도 확인할 수가 없다
+
+### 8.3 내가 승조 읽은 것을 고친 것 하나
+
+- 승조가 「카프카 노드 하나 추가해서 **비동기임을 보여주자**」로 읽었는데 그 자리는 그런 뜻이 아니다
+- **Kafka 노드는 고른 결과가 아니라 스팬이 그것밖에 안 알아서 남는 자리**다
+- **비동기임을 표시하는 것은 `callee_kind` 의 메시징 값과 화면 노드 모양 둘**이고, 이 둘은 D2 로 갔어도 그대로 필요하다
+
+## 9. 프롬프트를 가지고 실제 구현
+
+2026-10-28 에 1 ~ 8단계를 다 했다. 레포가 셋으로 갈려 PR 도 셋이다.
+
+| 레포 | 이슈 | 무엇 |
+|---|---|---|
+| `monimo-backend` | `#259` | 이름 짝(문제 4) · 겹친 CLIENT 스팬 접기(문제 3) · 필터 두 겹(문제 1) · MESSAGING 집계(문제 2) |
+| `monimo-shop` | `#54` | 비동기 경로 한 자리 (Kafka 토픽 하나 · 문제 2 의 데이터) |
+| `monimo-web` | (이슈 없음) | 비동기 노드 모양 · 간선 선 모양 (문제 2) |
+
+### 9.1 5절에 없던 안으로 갔다 : C1 이 드라이버에서 막혔다
+
+**C1(ClickHouse 전용 포트 9000)을 실제로 붙여 보고 기각했다.**
+
+| 붙인 주소 | 결과 |
+|---|---|
+| `jdbc:clickhouse://localhost:18123/monimo` (HTTP) | `OK -> 1` |
+| `jdbc:clickhouse://localhost:19000/monimo` (전용 포트) | `Port 9000 is for clickhouse-client program. You must use port 8123 for HTTP.` |
+| `jdbc:ch:tcp://localhost:19000/monimo` | `Failed to create connection` |
+
+- 드라이버가 **전용 포트에도 HTTP 로 말을 건다** : 포트만 바꾸면 ClickHouse 가 거절한다
+- `clickhouse-java 0.10.0` 에서 `ClickHouseClient` 를 등록하는 jar 가 **`clickhouse-http-client` 하나뿐**이다 (`META-INF/services` 확인) · 네이티브(TCP) 구현 jar 가 의존성에 아예 안 들어온다
+- `ClickHouseProtocol` Enum 에 `TCP` 가 있고 `UnsupportedProtocolException` 클래스도 있다 : **이름만 있고 구현이 없다**
+
+**그래서 5절에 없던 C5 로 갔다** : 에이전트에게 **겹친 CLIENT 스팬을 만들지 말라고** 한다.
+
+```
+OTEL_INSTRUMENTATION_EXPERIMENTAL_SPAN_SUPPRESSION_STRATEGY=span-kind
+```
+
+- 에이전트 jar 2.31.1 에 이 설정 이름이 실제로 있다 (`SpanSuppressionStrategy` : `NONE` · `SPAN_KIND` · `SEMCONV`)
+- 기본값 `semconv` 는 종류를 더 잘게(`DB_CLIENT` · `HTTP_CLIENT`) 봐서 둘을 **다른 것으로 치고 둘 다 남긴다**
+- `span-kind` 는 겉 스팬과 **같은 종류**의 안쪽 스팬을 안 만든다 : DB 스팬 안의 HTTP 스팬이 사라진다
+- **겉에 있는 CLIENT 는 그대로 남는다** : api-server 가 진짜로 부르는 Collector · 알림 · Detector 간선은 안 사라진다. 그래서 C3(그 계측 모듈을 끈다)보다 좁다
+- **잃는 것** : ClickHouse 호출의 HTTP 응답 코드와 `url.full`. 걸린 시간은 부모 DB 스팬이 그대로 갖고 있다
+- **남의 앱에는 여전히 못 쓴다** : 우리가 그 앱의 환경변수를 못 고친다 (C2 계열이 나중에 필요할 수 있다는 2.5 의 결론은 그대로다)
+
+### 9.2 실측 : 문제 3 (ClickHouse 2배 세기)
+
+`monimo-api-server` 가 부른 간선을 1분마다 센 것이다 (재시작은 00:10:26).
+
+| 1분 | `clickhouse:8123` DB | `clickhouse:8123` EXTERNAL |
+|---|---|---|
+| 00:09 (고치기 전) | 32 | **32** |
+| 00:10 (재시작한 분) | 21 | 8 |
+| 00:11 (고친 뒤) | 24 | **0** |
+
+- 고치기 전에는 **DB 와 EXTERNAL 이 정확히 같은 수**였다. 2.5 에서 본 2배가 그대로 나온다
+- 고친 뒤 `POST` 스팬이 **70초 동안 0건**이다 (DB 스팬은 그대로 들어온다)
+- 가짜 EXTERNAL 노드(`clickhouse:8123`)가 서버맵에서 사라졌다
+
+### 9.3 실측 : 문제 4 (같은 서비스가 두 번)
+
+| | 간선 | 종류 | 건수 |
+|---|---|---|---|
+| 전 | `monimo-detector → api-server:8080` | EXTERNAL | 31,458 |
+| 후 | `monimo-detector → monimo-api-server` | **SERVICE** | 14 (4분 창) |
+
+- compose 의 detector 에 `OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING: "api-server=monimo-api-server"` 한 줄
+- 쇼핑몰 `docker-compose.dev.yml` 이 이미 쓰는 방법과 같다 (`#23` 선례)
+
+### 9.4 실측 : 문제 1 (필터 한 겹 → 두 겹)
+
+같은 5분 창(`00:24` ~ `00:29`)에서 센 것이다.
+
+| 필터 | 간선 (한 겹) | 간선 (두 겹) | DB 간선 (한 겹 → 두 겹) |
+|---|---|---|---|
+| 없음 | 14 | 14 | 6 → 6 |
+| `shop-order` | 5 | **10** | 1 → 3 |
+| `shop-gateway` | 2 | **8** | **0 → 3** |
+
+- 1절이 적은 「`shop-gateway` 로 걸면 DB 노드가 0개」가 **3개로** 바뀌었다
+- `shop-order` 로 걸면 `shop-inventory → mysql` · `shop-inventory → redis` · `shop-payment → pg-stub` 가 같이 온다 (6절 원문의 예시 그대로)
+- 필터 없음이 그대로인 것이 중요하다 : **회귀가 없다** (`serviceName` 이 없으면 서브쿼리를 아예 안 붙인다)
+- **두 겹의 경계** : `shop-gateway` 로 걸면 `shop-payment → pg-stub` 와 `kafka → shop-inventory` 는 안 온다. 셋째 겹이라 뺀 것이고, 깊이를 늘리는 것은 7.4 의 되돌림 조건에 뒀다
+
+### 9.5 실측 : 문제 2 (비동기 간선)
+
+쇼핑몰 `order` 가 주문 완료를 토픽에 넣고 `inventory` 가 읽어 재고 조회 캐시를 다시 채운다.
+
+| 스팬 종류 | 서비스 | 스팬 이름 | `messaging.system` | `peer_address` | 2분치 |
+|---|---|---|---|---|---|
+| PRODUCER | `shop-order` | `shop.order.completed publish` | `kafka` | **빈 글자** | 420 |
+| CONSUMER | `shop-inventory` | `shop.order.completed process` | `kafka` | **빈 글자** | 455 |
+
+- **`peer_address` 가 비어 있다** : Kafka 계측 모듈은 `server.address` 를 안 넣는다. 노드 이름을 `messaging.system` 에서 가져온 판단이 맞았다 (동기 간선처럼 주소를 썼으면 이름 없는 노드가 됐다)
+- 집계에 들어간 간선 (4분 창)
+
+| 간선 | 종류 | 건수 | 평균 |
+|---|---|---|---|
+| `shop-order → kafka` | MESSAGING | 622 | 3.7ms |
+| `kafka → shop-inventory` | MESSAGING | 655 | 2.5ms |
+
+- **읽은 건수가 보낸 건수와 다르다** : 1분 창 경계에서 갈린다 (59초에 보내고 다음 분에 읽히면 두 분으로 나뉜다). 토픽으로 짝지어 하나로 합치는 안(D2)을 버린 이유가 숫자로 보인다
+- 서버맵 전체(4분 창)가 **간선 14개 · 종류 넷**이 됐다 : SERVICE 5 · DB 6 · EXTERNAL 1 · **MESSAGING 2**
+
+### 9.6 고치면서 밟은 함정 둘
+
+**① 쇼핑몰 Kafka 와 백엔드 Kafka 가 이름이 겹쳤다**
+
+- 둘 다 공용 네트워크 `monimo-dev` 에 `kafka` 라는 이름으로 떴다
+- `kafka-init` 이 만든 `shop.order.completed` 토픽이 **백엔드 Kafka 에 생겼고** 쇼핑몰 쪽은 `UNKNOWN_TOPIC_OR_PARTITION` 이었다
+- 쇼핑몰 서비스 이름을 `shop-kafka` 로 바꿨다. 서버맵 노드 이름은 컨테이너 이름이 아니라 `messaging.system` 에서 나오므로 영향이 없다
+- 잘못 생긴 토픽은 백엔드 Kafka 에서 지웠다 (`raw` · `raw.dlq` 둘만 남은 것을 확인)
+
+**② 리스너를 토픽 이름으로 끄려 했는데 빈 값이 「있다」로 읽혔다**
+
+- `@ConditionalOnProperty` 는 이름이 **있는지**만 본다. `application.yml` 에 빈 값으로 적어 두면 리스너가 생겨 Kafka 없이 띄울 때 브로커를 계속 찾는다
+- 그래서 `inventory` 쪽은 그 줄을 **application.yml 에 아예 안 적고** compose 가 넣는다. 안 적은 이유를 그 자리에 주석으로 남겼다
+
+**③ 깨진 JSON 이 `RuntimeException` 으로 안 잡혔다**
+
+- `ObjectMapper.readTree` 가 던지는 `JsonParseException` 은 `IOException` 계열이다
+- `catch (e: RuntimeException)` 으로는 못 잡아 테스트가 실패했다. `JsonProcessingException` 으로 바꿨다
+
+### 9.7 테스트
+
+| 어디 | 무엇 | 결과 |
+|---|---|---|
+| backend `ServerMapApiTest` | 두 겹 필터 · MESSAGING 간선 둘 · 화살표 뒤집기 | 10건 통과 |
+| shop `OrderServiceTest` | 재고가 바뀐 주문만 알린다 (SOLD_OUT 은 안 알린다) | 통과 |
+| shop `OrderEventPublisherTest` | 토픽 이름이 비면 안 보낸다 · 터져도 삼킨다 · 키는 상품 번호 | 3건 통과 |
+| shop `OrderCompletedListenerTest` | 깨진 JSON · `productId` 없음을 넘긴다 | 3건 통과 |
+| web | `npm run build` · `npm test` 47건 · `npm run lint` | 통과 |
+
+- backend 테스트는 `spans` 에 PRODUCER · CONSUMER 줄을 직접 넣어 **MV 를 거쳐** 확인한다. 쇼핑몰 없이도 집계 로직이 검증된다
+
+### 9.8 아직 안 한 것
+
+- **화면을 눈으로 확인하지 못했다** : 브라우저 확장이 안 붙어 스크린샷을 못 찍었다. API 와 ClickHouse 로 데이터는 다 확인했고 web 은 빌드 · 테스트 · lint 로만 확인했다. `http://localhost:5173` 에서 사람이 봐야 한다
+- **트레이스 상세 화면의 비동기 표시** : 보낸 쪽과 읽은 쪽이 다른 트레이스라 한 나무로 못 그린다. 1절이 적은 범위 밖 그대로 둔다
+- **남의 앱의 ClickHouse 2배 세기** : `span-kind` 는 그 앱 환경변수라 우리가 못 넣는다
+- **`glossary.md` 의 「서버맵 → Service map」** : 화면 · 코드 · 이 문서는 서버맵인데 용어집이 다르다 (`#240` · ADR `#73` 을 되돌리는 일이라 ADR 줄이 필요하다)
