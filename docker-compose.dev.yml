@@ -47,7 +47,7 @@ services:
       retries: 30
       start_period: 5s
 
-  # 주문 완료를 알리는 비동기 경로 (#54, backend #259 문제 2). 서버맵에 비동기 간선이 나오는 자리다.
+  # 주문 완료를 알리는 비동기 경로 (#54, backend #259 문제 2). Service map 에 비동기 간선이 나오는 자리다.
   # backend 의 Kafka 와 **따로 둔다** : 그쪽은 수집 파이프라인의 통로라 감시 대상 앱이 끼어들 자리가 아니다
   # (토픽 이름이 겹칠 수도 있고, 쇼핑몰을 내려도 파이프라인은 떠 있어야 한다).
   # 에이전트를 붙이지 않는다 : Kafka 는 미들웨어라 노드가 간선의 callee_kind(MESSAGING)로만 그려진다.
@@ -55,7 +55,7 @@ services:
   # 이름이 shop-kafka 인 이유 : 공용 네트워크 monimo-dev 에 backend 의 kafka 가 이미 있다. 둘 다 kafka 로 두면
   # 같은 이름이 두 컨테이너를 가리켜 토픽이 어느 쪽에 생길지 모른다 (실측 2026-10-28 : kafka-init 이 만든
   # shop.order.completed 가 backend Kafka 에 생겨서 쇼핑몰 쪽은 UNKNOWN_TOPIC_OR_PARTITION 이었다).
-  # 서버맵 노드 이름은 이 컨테이너 이름이 아니라 스팬의 messaging.system(kafka) 에서 나오므로 영향이 없다
+  # Service map 노드 이름은 이 컨테이너 이름이 아니라 스팬의 messaging.system(kafka) 에서 나오므로 영향이 없다
   shop-kafka:
     image: apache/kafka:3.9.2
     ports:

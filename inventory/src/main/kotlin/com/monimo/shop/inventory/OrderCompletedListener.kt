@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component
 /**
  * 주문이 끝났다는 알림을 읽어 재고 조회 캐시를 다시 채운다 (#54, backend `#259` 문제 2).
  *
- * 서버맵에 비동기 간선을 만드는 자리다. 에이전트의 Kafka 계측 모듈이 CONSUMER 스팬을 자동으로 만들고,
+ * Service map 에 비동기 간선을 만드는 자리다. 에이전트의 Kafka 계측 모듈이 CONSUMER 스팬을 자동으로 만들고,
  * 이 메서드 안에서 도는 MySQL · Redis 호출이 그 스팬의 자식이 된다. **스팬을 직접 만들지 않는다** (ADR `#33`).
  *
  * `@ConditionalOnProperty` 로 토픽 이름이 있을 때만 만든다 : 없으면 빈이 없어서 에이전트도 브로커도 안 찾는다.

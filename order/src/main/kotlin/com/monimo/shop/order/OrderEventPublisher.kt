@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component
 /**
  * 주문이 끝났다는 것을 토픽에 넣는다. 재고 서비스가 읽어 조회 캐시를 다시 채운다 (#54, backend `#259` 문제 2).
  *
- * 왜 만드나 : 서버맵이 그리는 간선 종류가 셋(서비스 · DB · 외부)뿐이고 비동기 구간이 아예 안 보였다.
+ * 왜 만드나 : Service map 이 그리는 간선 종류가 셋(서비스 · DB · 외부)뿐이고 비동기 구간이 아예 안 보였다.
  * 쇼핑몰이 전부 동기 MVC 라(ADR `#33` · `#25`) PRODUCER · CONSUMER 스팬이 스팬 495만건 중 0건이었다(실측 2026-10-28).
  * 우리 백엔드의 Kafka 로는 못 만든다 : Collector · Ingester 는 트레이스를 끄고 있다(backend `#213` 되먹임).
  *

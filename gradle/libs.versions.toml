@@ -32,7 +32,7 @@ testcontainers-mysql = { module = "org.testcontainers:mysql" }
 # 재고 서비스 캐시 (Redis, 클라이언트는 Boot 기본인 Lettuce). Service map 에 캐시 노드가 나오게 (#32). 버전은 Spring Boot BOM 이 정한다
 spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
 spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache" }
-# 주문 완료를 알리는 비동기 경로 (Kafka). 서버맵에 비동기 간선이 나오게 (#54, backend #259). 버전은 Spring Boot BOM 이 정한다
+# 주문 완료를 알리는 비동기 경로 (Kafka). Service map 에 비동기 간선이 나오게 (#54, backend #259). 버전은 Spring Boot BOM 이 정한다
 spring-kafka = { module = "org.springframework.kafka:spring-kafka" }
 
 # agent-extension (compileOnly). 실행 때는 에이전트 안의 같은 클래스를 쓴다

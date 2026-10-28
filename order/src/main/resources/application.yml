@@ -31,7 +31,7 @@ payment:
 inventory:
   base-url: ${INVENTORY_BASE_URL:http://localhost:8093}
 
-# 주문 완료를 알리는 비동기 경로 (#54). 서버맵에 비동기 간선이 나오는 자리다
+# 주문 완료를 알리는 비동기 경로 (#54). Service map 에 비동기 간선이 나오는 자리다
 shop:
   order:
     # 비어 있으면 아무것도 보내지 않는다. compose 가 SHOP_ORDER_COMPLETED_TOPIC 으로 채운다.
