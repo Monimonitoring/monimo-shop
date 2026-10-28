@@ -569,4 +569,134 @@ D1은 비동기니까 두 개로 나눠서 간선을 만들고 카프카 노드 
 
 ## 9. 프롬프트를 가지고 실제 구현
 
-<!-- 8 뒤에 쓴다 -->
+2026-10-28 에 1 ~ 8단계를 다 했다. 레포가 셋으로 갈려 PR 도 셋이다.
+
+| 레포 | 이슈 | 무엇 |
+|---|---|---|
+| `monimo-backend` | `#259` | 이름 짝(문제 4) · 겹친 CLIENT 스팬 접기(문제 3) · 필터 두 겹(문제 1) · MESSAGING 집계(문제 2) |
+| `monimo-shop` | `#54` | 비동기 경로 한 자리 (Kafka 토픽 하나 · 문제 2 의 데이터) |
+| `monimo-web` | (이슈 없음) | 비동기 노드 모양 · 간선 선 모양 (문제 2) |
+
+### 9.1 5절에 없던 안으로 갔다 : C1 이 드라이버에서 막혔다
+
+**C1(ClickHouse 전용 포트 9000)을 실제로 붙여 보고 기각했다.**
+
+| 붙인 주소 | 결과 |
+|---|---|
+| `jdbc:clickhouse://localhost:18123/monimo` (HTTP) | `OK -> 1` |
+| `jdbc:clickhouse://localhost:19000/monimo` (전용 포트) | `Port 9000 is for clickhouse-client program. You must use port 8123 for HTTP.` |
+| `jdbc:ch:tcp://localhost:19000/monimo` | `Failed to create connection` |
+
+- 드라이버가 **전용 포트에도 HTTP 로 말을 건다** : 포트만 바꾸면 ClickHouse 가 거절한다
+- `clickhouse-java 0.10.0` 에서 `ClickHouseClient` 를 등록하는 jar 가 **`clickhouse-http-client` 하나뿐**이다 (`META-INF/services` 확인) · 네이티브(TCP) 구현 jar 가 의존성에 아예 안 들어온다
+- `ClickHouseProtocol` Enum 에 `TCP` 가 있고 `UnsupportedProtocolException` 클래스도 있다 : **이름만 있고 구현이 없다**
+
+**그래서 5절에 없던 C5 로 갔다** : 에이전트에게 **겹친 CLIENT 스팬을 만들지 말라고** 한다.
+
+```
+OTEL_INSTRUMENTATION_EXPERIMENTAL_SPAN_SUPPRESSION_STRATEGY=span-kind
+```
+
+- 에이전트 jar 2.31.1 에 이 설정 이름이 실제로 있다 (`SpanSuppressionStrategy` : `NONE` · `SPAN_KIND` · `SEMCONV`)
+- 기본값 `semconv` 는 종류를 더 잘게(`DB_CLIENT` · `HTTP_CLIENT`) 봐서 둘을 **다른 것으로 치고 둘 다 남긴다**
+- `span-kind` 는 겉 스팬과 **같은 종류**의 안쪽 스팬을 안 만든다 : DB 스팬 안의 HTTP 스팬이 사라진다
+- **겉에 있는 CLIENT 는 그대로 남는다** : api-server 가 진짜로 부르는 Collector · 알림 · Detector 간선은 안 사라진다. 그래서 C3(그 계측 모듈을 끈다)보다 좁다
+- **잃는 것** : ClickHouse 호출의 HTTP 응답 코드와 `url.full`. 걸린 시간은 부모 DB 스팬이 그대로 갖고 있다
+- **남의 앱에는 여전히 못 쓴다** : 우리가 그 앱의 환경변수를 못 고친다 (C2 계열이 나중에 필요할 수 있다는 2.5 의 결론은 그대로다)
+
+### 9.2 실측 : 문제 3 (ClickHouse 2배 세기)
+
+`monimo-api-server` 가 부른 간선을 1분마다 센 것이다 (재시작은 00:10:26).
+
+| 1분 | `clickhouse:8123` DB | `clickhouse:8123` EXTERNAL |
+|---|---|---|
+| 00:09 (고치기 전) | 32 | **32** |
+| 00:10 (재시작한 분) | 21 | 8 |
+| 00:11 (고친 뒤) | 24 | **0** |
+
+- 고치기 전에는 **DB 와 EXTERNAL 이 정확히 같은 수**였다. 2.5 에서 본 2배가 그대로 나온다
+- 고친 뒤 `POST` 스팬이 **70초 동안 0건**이다 (DB 스팬은 그대로 들어온다)
+- 가짜 EXTERNAL 노드(`clickhouse:8123`)가 서버맵에서 사라졌다
+
+### 9.3 실측 : 문제 4 (같은 서비스가 두 번)
+
+| | 간선 | 종류 | 건수 |
+|---|---|---|---|
+| 전 | `monimo-detector → api-server:8080` | EXTERNAL | 31,458 |
+| 후 | `monimo-detector → monimo-api-server` | **SERVICE** | 14 (4분 창) |
+
+- compose 의 detector 에 `OTEL_INSTRUMENTATION_COMMON_PEER_SERVICE_MAPPING: "api-server=monimo-api-server"` 한 줄
+- 쇼핑몰 `docker-compose.dev.yml` 이 이미 쓰는 방법과 같다 (`#23` 선례)
+
+### 9.4 실측 : 문제 1 (필터 한 겹 → 두 겹)
+
+같은 5분 창(`00:24` ~ `00:29`)에서 센 것이다.
+
+| 필터 | 간선 (한 겹) | 간선 (두 겹) | DB 간선 (한 겹 → 두 겹) |
+|---|---|---|---|
+| 없음 | 14 | 14 | 6 → 6 |
+| `shop-order` | 5 | **10** | 1 → 3 |
+| `shop-gateway` | 2 | **8** | **0 → 3** |
+
+- 1절이 적은 「`shop-gateway` 로 걸면 DB 노드가 0개」가 **3개로** 바뀌었다
+- `shop-order` 로 걸면 `shop-inventory → mysql` · `shop-inventory → redis` · `shop-payment → pg-stub` 가 같이 온다 (6절 원문의 예시 그대로)
+- 필터 없음이 그대로인 것이 중요하다 : **회귀가 없다** (`serviceName` 이 없으면 서브쿼리를 아예 안 붙인다)
+- **두 겹의 경계** : `shop-gateway` 로 걸면 `shop-payment → pg-stub` 와 `kafka → shop-inventory` 는 안 온다. 셋째 겹이라 뺀 것이고, 깊이를 늘리는 것은 7.4 의 되돌림 조건에 뒀다
+
+### 9.5 실측 : 문제 2 (비동기 간선)
+
+쇼핑몰 `order` 가 주문 완료를 토픽에 넣고 `inventory` 가 읽어 재고 조회 캐시를 다시 채운다.
+
+| 스팬 종류 | 서비스 | 스팬 이름 | `messaging.system` | `peer_address` | 2분치 |
+|---|---|---|---|---|---|
+| PRODUCER | `shop-order` | `shop.order.completed publish` | `kafka` | **빈 글자** | 420 |
+| CONSUMER | `shop-inventory` | `shop.order.completed process` | `kafka` | **빈 글자** | 455 |
+
+- **`peer_address` 가 비어 있다** : Kafka 계측 모듈은 `server.address` 를 안 넣는다. 노드 이름을 `messaging.system` 에서 가져온 판단이 맞았다 (동기 간선처럼 주소를 썼으면 이름 없는 노드가 됐다)
+- 집계에 들어간 간선 (4분 창)
+
+| 간선 | 종류 | 건수 | 평균 |
+|---|---|---|---|
+| `shop-order → kafka` | MESSAGING | 622 | 3.7ms |
+| `kafka → shop-inventory` | MESSAGING | 655 | 2.5ms |
+
+- **읽은 건수가 보낸 건수와 다르다** : 1분 창 경계에서 갈린다 (59초에 보내고 다음 분에 읽히면 두 분으로 나뉜다). 토픽으로 짝지어 하나로 합치는 안(D2)을 버린 이유가 숫자로 보인다
+- 서버맵 전체(4분 창)가 **간선 14개 · 종류 넷**이 됐다 : SERVICE 5 · DB 6 · EXTERNAL 1 · **MESSAGING 2**
+
+### 9.6 고치면서 밟은 함정 둘
+
+**① 쇼핑몰 Kafka 와 백엔드 Kafka 가 이름이 겹쳤다**
+
+- 둘 다 공용 네트워크 `monimo-dev` 에 `kafka` 라는 이름으로 떴다
+- `kafka-init` 이 만든 `shop.order.completed` 토픽이 **백엔드 Kafka 에 생겼고** 쇼핑몰 쪽은 `UNKNOWN_TOPIC_OR_PARTITION` 이었다
+- 쇼핑몰 서비스 이름을 `shop-kafka` 로 바꿨다. 서버맵 노드 이름은 컨테이너 이름이 아니라 `messaging.system` 에서 나오므로 영향이 없다
+- 잘못 생긴 토픽은 백엔드 Kafka 에서 지웠다 (`raw` · `raw.dlq` 둘만 남은 것을 확인)
+
+**② 리스너를 토픽 이름으로 끄려 했는데 빈 값이 「있다」로 읽혔다**
+
+- `@ConditionalOnProperty` 는 이름이 **있는지**만 본다. `application.yml` 에 빈 값으로 적어 두면 리스너가 생겨 Kafka 없이 띄울 때 브로커를 계속 찾는다
+- 그래서 `inventory` 쪽은 그 줄을 **application.yml 에 아예 안 적고** compose 가 넣는다. 안 적은 이유를 그 자리에 주석으로 남겼다
+
+**③ 깨진 JSON 이 `RuntimeException` 으로 안 잡혔다**
+
+- `ObjectMapper.readTree` 가 던지는 `JsonParseException` 은 `IOException` 계열이다
+- `catch (e: RuntimeException)` 으로는 못 잡아 테스트가 실패했다. `JsonProcessingException` 으로 바꿨다
+
+### 9.7 테스트
+
+| 어디 | 무엇 | 결과 |
+|---|---|---|
+| backend `ServerMapApiTest` | 두 겹 필터 · MESSAGING 간선 둘 · 화살표 뒤집기 | 10건 통과 |
+| shop `OrderServiceTest` | 재고가 바뀐 주문만 알린다 (SOLD_OUT 은 안 알린다) | 통과 |
+| shop `OrderEventPublisherTest` | 토픽 이름이 비면 안 보낸다 · 터져도 삼킨다 · 키는 상품 번호 | 3건 통과 |
+| shop `OrderCompletedListenerTest` | 깨진 JSON · `productId` 없음을 넘긴다 | 3건 통과 |
+| web | `npm run build` · `npm test` 47건 · `npm run lint` | 통과 |
+
+- backend 테스트는 `spans` 에 PRODUCER · CONSUMER 줄을 직접 넣어 **MV 를 거쳐** 확인한다. 쇼핑몰 없이도 집계 로직이 검증된다
+
+### 9.8 아직 안 한 것
+
+- **화면을 눈으로 확인하지 못했다** : 브라우저 확장이 안 붙어 스크린샷을 못 찍었다. API 와 ClickHouse 로 데이터는 다 확인했고 web 은 빌드 · 테스트 · lint 로만 확인했다. `http://localhost:5173` 에서 사람이 봐야 한다
+- **트레이스 상세 화면의 비동기 표시** : 보낸 쪽과 읽은 쪽이 다른 트레이스라 한 나무로 못 그린다. 1절이 적은 범위 밖 그대로 둔다
+- **남의 앱의 ClickHouse 2배 세기** : `span-kind` 는 그 앱 환경변수라 우리가 못 넣는다
+- **`glossary.md` 의 「서버맵 → Service map」** : 화면 · 코드 · 이 문서는 서버맵인데 용어집이 다르다 (`#240` · ADR `#73` 을 되돌리는 일이라 ADR 줄이 필요하다)
