@@ -1,4 +1,4 @@
-# 리서치 : 서버맵이 우리 시스템을 틀리게 그린다 (문제 넷)
+# 리서치 : Service map 이 우리 시스템을 틀리게 그린다 (문제 넷)
 
 - 날짜 2026-10-28 / 관련 이슈 [`#54`](https://github.com/Monimonitoring/monimo-shop/issues/54) (멘토 피드백 D · 「서비스 **수**보다 **간선 종류**를 늘려라」)
 - 쓴 도구 : **화면을 직접 띄워서 봤다**(쇼핑몰 + Collector + Ingester + API server + Detector + web 을 다 켜고 k6 12분) · **API 를 필터 걸고 안 걸고 두 번 불러 비교** · **ClickHouse 직접 조회**(스팬 495만 건의 종류 분포 · 서비스별 · 스팬 계보) · **에이전트 jar 를 풀어 계측 모듈 132개 확인** · backend 레포 읽기(`mv_server_map_1m` · `server_map_1m` · `PeerServiceResolver` · `ServerMapRepository` · `Dockerfile`) · web 레포 `features/server-map/` 넷
@@ -13,8 +13,8 @@
 
 ## 1. 이번 작업은 무엇을 하는 일인가
 
-- **지금 무엇이 잘못됐나** : 서버맵이 **우리 시스템을 있는 그대로 안 그린다**. 화면을 띄워 보니 문제가 넷이었다. 멘토가 짚은 「간선 종류」는 그중 하나였고, 나머지 셋은 보다가 새로 찾았다
-- **그래서 무엇을 만드나** : 네 문제를 고쳐 **서버맵에서 본 그림과 숫자를 믿을 수 있게** 한다
+- **지금 무엇이 잘못됐나** : Service map 이 **우리 시스템을 있는 그대로 안 그린다**. 화면을 띄워 보니 문제가 넷이었다. 멘토가 짚은 「간선 종류」는 그중 하나였고, 나머지 셋은 보다가 새로 찾았다
+- **그래서 무엇을 만드나** : 네 문제를 고쳐 **Service map 에서 본 그림과 숫자를 믿을 수 있게** 한다
 - **안 하면 어떻게 되나** : 면접관이 「비동기 구간은 어떻게 보나」 물으면 답이 없고, 호출 수를 물으면 **2배로 부푼 숫자**를 보여 주게 된다. 그리고 우리 모듈끼리의 호출이 **밖으로 나가는 호출**처럼 그려진 채로 남는다
 
 ### 문제 넷 (승조 정리본)
@@ -34,7 +34,7 @@
 
 **조사 들어가기 전에 내가 알던 것 (세 줄)**
 
-- 서버맵은 **`mv_server_map_1m` 이 1분 단위로 접어 둔 표**를 조회가 읽는다. 원본 `spans` 를 직접 읽지 않는다
+- Service map 은 **`mv_server_map_1m` 이 1분 단위로 접어 둔 표**를 조회가 읽는다. 원본 `spans` 를 직접 읽지 않는다
 - `#32` 에서 **Redis 와 pg-stub 을 peer 매핑에 일부러 안 넣었다** : 넣으면 우리 서비스로 잘못 그려진다. 그래서 DB · EXTERNAL 로 나온다
 - `#51` 에서 **서비스를 하나 늘리면 에이전트 몫으로 메모리 75 ~ 126MB** 가 붙는다
 
@@ -48,7 +48,7 @@
 
 ## 2. 작업하기 전에 알아야 하는 것
 
-### 2.1 서버맵 한 간선이 어디서 만들어지나
+### 2.1 Service map 한 간선이 어디서 만들어지나
 
 ```
 [에이전트]  요청마다 스팬을 만든다
@@ -62,12 +62,12 @@
                  ↓ mv_server_map_1m  ← INSERT 될 때마다 자동으로 접는다
 [server_map_1m]  1분 단위 간선 표
                  ↓ ServerMapRepository
-[화면]       서버맵
+[화면]       Service map
 ```
 
-- **서버맵은 원본이 아니라 접은 표를 읽는다** : `FROM server_map_1m` (코드로 확인)
+- **Service map 은 원본이 아니라 접은 표를 읽는다** : `FROM server_map_1m` (코드로 확인)
 - **트레이스 상세는 원본을 읽는다** : `FROM spans`
-- 그래서 **접을 때 버린 것은 서버맵에서 영영 안 보인다** · 조회가 나중에 못 고친다
+- 그래서 **접을 때 버린 것은 Service map 에서 영영 안 보인다** · 조회가 나중에 못 고친다
 
 ### 2.2 지금 그려지는 간선 종류는 셋이다
 
@@ -228,7 +228,7 @@ MySQL 조회
 - 노드 모양도 먼저 온 쪽이 이겨 DB 원통일 때도 외부 점선일 때도 있다
 - **남의 앱이 HTTP 로 말하는 저장소**(Elasticsearch · OpenSearch · S3 · 클라우드 DB)를 쓰면 **똑같이 2배로 센다**
 
-### 2.6 문제 4 : 같은 서비스가 서버맵에 두 번 그려진다
+### 2.6 문제 4 : 같은 서비스가 Service map 에 두 번 그려진다
 
 ```
 Detector 가 부르는 주소 : api-server:8080
@@ -244,7 +244,7 @@ PeerServiceResolver 규칙 : 주소 첫 라벨이 서비스 이름과 "정확히
 | `monimo-detector → api-server:8080` | **EXTERNAL** | 31,458 |
 
 - 등록된 이름 목록도 확인했다 : `monimo-api-server` · `monimo-collector` · `monimo-detector` · `monimo-ingester` · `monimo-notifier` · `shop-*` 넷
-- 서버맵에 API server 가 **두 번** 나온다 : `monimo-api-server`(서비스 카드) · `api-server:8080`(외부 점선)
+- Service map 에 API server 가 **두 번** 나온다 : `monimo-api-server`(서비스 카드) · `api-server:8080`(외부 점선)
 - **우리 모듈끼리의 호출이 밖으로 나가는 호출처럼 보인다**
 - 쇼핑몰은 안 그렇다 : 컨테이너 이름 `shop-order` 와 서비스 이름 `shop-order` 가 **같다**
 
@@ -272,7 +272,7 @@ PeerServiceResolver 규칙 : 주소 첫 라벨이 서비스 이름과 "정확히
 ### 2.9 선례 : 간선을 건드린 일이 두 번 있었다
 
 - **`#32`(재고 Redis)** : Redis 를 peer 매핑에 **안 넣기로** 정했다. **잘못 그려지는 것보다 안 그려지는 것이 낫다**는 판단이었다
-- **backend `#92`(헬스체크 거르기)** : 헬스체크 SERVER 스팬을 버려도 **그 안의 CLIENT 스팬이 서버맵에 헬스체크 발 간선**을 만든다 (backend `AGENTS.md` §6 에 열린 행)
+- **backend `#92`(헬스체크 거르기)** : 헬스체크 SERVER 스팬을 버려도 **그 안의 CLIENT 스팬이 Service map 에 헬스체크 발 간선**을 만든다 (backend `AGENTS.md` §6 에 열린 행)
   - **PRODUCER · CONSUMER 를 집계에 넣으면 걸러야 할 스팬이 늘어난다** · 같은 모양의 위험이다
 
 ### 2.10 낱말 정리
@@ -347,9 +347,9 @@ PeerServiceResolver 규칙 : 주소 첫 라벨이 서비스 이름과 "정확히
 
 ### 4.1 확실해진 것
 
-- **쇼핑몰 쪽 서버맵은 멀쩡하다** : 서비스 넷 · MySQL · Redis · 외부 결제사가 **필터만 풀면 전부 나온다** (실측)
+- **쇼핑몰 쪽 Service map 은 멀쩡하다** : 서비스 넷 · MySQL · Redis · 외부 결제사가 **필터만 풀면 전부 나온다** (실측)
 - **멘토가 든 셋 중 둘은 이미 된다** : Redis(DB) · 외부 API(EXTERNAL). 없는 것은 **비동기 하나**다
-- **서버맵은 원본이 아니라 접은 표를 읽는다** : 접을 때 버린 것은 조회가 못 살린다. 그래서 **쇼핑몰만 고쳐서는 비동기 간선이 안 보인다**
+- **Service map 은 원본이 아니라 접은 표를 읽는다** : 접을 때 버린 것은 조회가 못 살린다. 그래서 **쇼핑몰만 고쳐서는 비동기 간선이 안 보인다**
 - **문제가 넷이다** : 멘토가 짚은 비동기(2번) 말고 셋을 화면을 보다가 찾았다
 - **2 · 3 · 4 는 전부 「에이전트가 만든 스팬을 집계가 어떻게 세느냐」 문제**다. 쇼핑몰 코드 문제가 아니다
 
@@ -359,7 +359,9 @@ PeerServiceResolver 규칙 : 주소 첫 라벨이 서비스 이름과 "정확히
   - **Ingester 를 안 띄웠다** : `#51` 측정 스팬이 Kafka 에 머물러 ClickHouse 까지 안 왔다
   - 남은 10-15 회차가 **재고 조회를 안 밟았다**
 - **「`payment → mysql` 이 없는 것이 결함」이라고 한 것도 틀렸다** : `#32`(`60b8864`)가 MySQL 을 inventory 로 옮겨서 payment 는 **원래 DB 를 안 쓴다**
-- **「지도」 · 「서비스맵」이라는 말을 썼다** : 화면과 코드와 `glossary.md` 가 전부 **서버맵**이다. 이 문서는 서버맵으로 통일한다
+- **「지도」 · 「서비스맵」이라는 말을 썼다** : 화면과 코드와 `glossary.md` 가 전부 **Service map**이다. 이 문서는 Service map 으로 통일한다
+
+> **2026-10-29 정정** : 위 셋째 줄은 고치는 방향을 한 번 더 틀렸다. 그때 「서버맵으로 통일한다」로 써서 이 문서 전체를 **서버맵**으로 썼는데, `glossary.md` 가 서버맵을 **「옛 이름」 칸**에 두고 **「새 이름」을 Service map** 으로 정해 뒀다(`#240`). 즉 「지도」 · 「서비스맵」을 버린 것은 맞고 **갈 곳이 서버맵이 아니라 Service map 이었다**. 2026-10-29 에 이 문서 · `README` · `AGENTS` 를 Service map 으로 다시 썼다. **승조가 직접 쓴 3 · 6 · 8절과 `prompts.md` 는 원문이라 그대로 둔다**(6절에 「서버맵에서 따로 그려졌다」가 남아 있다). 코드 식별자(`ServerMap` 컴포넌트 · `server_map_1m` 표 · `/server-map` 경로)는 **옛 이름에서 온 것도 바꾸지 않는다** : 바꾸면 쌓인 표와 주소가 깨진다
 
 ### 4.3 아직 모르는 것
 
@@ -406,7 +408,7 @@ PeerServiceResolver 규칙 : 주소 첫 라벨이 서비스 이름과 "정확히
 |---|---|---|---|
 | **D1** | `order → kafka` + `kafka → consumer` | CONSUMER 도 집계에 넣고 **받는 쪽을 호출자로 뒤집어** 읽는다 | Kafka 노드가 하나 생긴다 · 토픽이 여럿이면 뭉친다 |
 | D2 | `order → consumer` (토픽은 간선 이름표) | PRODUCER · CONSUMER 를 **토픽으로 조인** | 1분 집계 안에서 짝이 안 맞을 수 있다 · MV 하나로는 안 된다 |
-| D3 | `order → consumer` | Kafka 헤더의 `trace_id` 로 잇는다 | 서버맵은 **1분 접기**지 트레이스 단위가 아니다 |
+| D3 | `order → consumer` | Kafka 헤더의 `trace_id` 로 잇는다 | Service map 은 **1분 접기**지 트레이스 단위가 아니다 |
 
 ### 5.E 문제 4 (이름) 을 어디서 맞추나
 
@@ -422,7 +424,7 @@ PeerServiceResolver 규칙 : 주소 첫 라벨이 서비스 이름과 "정확히
 | 안 | 범위 | 이유 |
 |---|---|---|
 | F1 | 1 · 2 만 | 멘토 피드백 D 가 가리킨 것 · 남의 앱에도 생기는 문제 |
-| **F2** | **1 · 2 · 4** | 4번은 compose 한 줄이라 거의 공짜다 · 지금 서버맵이 거짓말을 하고 있다 |
+| **F2** | **1 · 2 · 4** | 4번은 compose 한 줄이라 거의 공짜다 · 지금 Service map 이 거짓말을 하고 있다 |
 | F3 | 넷 다 | 3번은 ClickHouse 접속을 바꾸는 일이라 시험이 붙는다 |
 
 ## 6. 2차 질문 (사람 차례)
@@ -515,7 +517,7 @@ e.g. compose 에 "api-server=monimo-api-server"
 
 ### 7.5 면접에서 물어볼 만한 것 다섯
 
-- 서버맵은 왜 원본이 아니라 접은 표를 읽나 · 접을 때 버린 것은 왜 못 살리나
+- Service map 은 왜 원본이 아니라 접은 표를 읽나 · 접을 때 버린 것은 왜 못 살리나
 - 같은 쿼리가 스팬 둘이 되는 것을 어떻게 알아챘나 · 왜 ClickHouse 만 그런가
 - 비동기 간선은 왜 동기 간선과 같은 방법으로 못 그리나
 - 우리 백엔드에 에이전트를 붙인 것이 어떤 값을 했나
@@ -616,7 +618,7 @@ OTEL_INSTRUMENTATION_EXPERIMENTAL_SPAN_SUPPRESSION_STRATEGY=span-kind
 
 - 고치기 전에는 **DB 와 EXTERNAL 이 정확히 같은 수**였다. 2.5 에서 본 2배가 그대로 나온다
 - 고친 뒤 `POST` 스팬이 **70초 동안 0건**이다 (DB 스팬은 그대로 들어온다)
-- 가짜 EXTERNAL 노드(`clickhouse:8123`)가 서버맵에서 사라졌다
+- 가짜 EXTERNAL 노드(`clickhouse:8123`)가 Service map 에서 사라졌다
 
 ### 9.3 실측 : 문제 4 (같은 서비스가 두 번)
 
@@ -661,7 +663,7 @@ OTEL_INSTRUMENTATION_EXPERIMENTAL_SPAN_SUPPRESSION_STRATEGY=span-kind
 | `kafka → shop-inventory` | MESSAGING | 655 | 2.5ms |
 
 - **읽은 건수가 보낸 건수와 다르다** : 1분 창 경계에서 갈린다 (59초에 보내고 다음 분에 읽히면 두 분으로 나뉜다). 토픽으로 짝지어 하나로 합치는 안(D2)을 버린 이유가 숫자로 보인다
-- 서버맵 전체(4분 창)가 **간선 14개 · 종류 넷**이 됐다 : SERVICE 5 · DB 6 · EXTERNAL 1 · **MESSAGING 2**
+- Service map 전체(4분 창)가 **간선 14개 · 종류 넷**이 됐다 : SERVICE 5 · DB 6 · EXTERNAL 1 · **MESSAGING 2**
 
 ### 9.6 고치면서 밟은 함정 둘
 
@@ -669,7 +671,7 @@ OTEL_INSTRUMENTATION_EXPERIMENTAL_SPAN_SUPPRESSION_STRATEGY=span-kind
 
 - 둘 다 공용 네트워크 `monimo-dev` 에 `kafka` 라는 이름으로 떴다
 - `kafka-init` 이 만든 `shop.order.completed` 토픽이 **백엔드 Kafka 에 생겼고** 쇼핑몰 쪽은 `UNKNOWN_TOPIC_OR_PARTITION` 이었다
-- 쇼핑몰 서비스 이름을 `shop-kafka` 로 바꿨다. 서버맵 노드 이름은 컨테이너 이름이 아니라 `messaging.system` 에서 나오므로 영향이 없다
+- 쇼핑몰 서비스 이름을 `shop-kafka` 로 바꿨다. Service map 노드 이름은 컨테이너 이름이 아니라 `messaging.system` 에서 나오므로 영향이 없다
 - 잘못 생긴 토픽은 백엔드 Kafka 에서 지웠다 (`raw` · `raw.dlq` 둘만 남은 것을 확인)
 
 **② 리스너를 토픽 이름으로 끄려 했는데 빈 값이 「있다」로 읽혔다**
@@ -699,4 +701,4 @@ OTEL_INSTRUMENTATION_EXPERIMENTAL_SPAN_SUPPRESSION_STRATEGY=span-kind
 - **화면을 눈으로 확인하지 못했다** : 브라우저 확장이 안 붙어 스크린샷을 못 찍었다. API 와 ClickHouse 로 데이터는 다 확인했고 web 은 빌드 · 테스트 · lint 로만 확인했다. `http://localhost:5173` 에서 사람이 봐야 한다
 - **트레이스 상세 화면의 비동기 표시** : 보낸 쪽과 읽은 쪽이 다른 트레이스라 한 나무로 못 그린다. 1절이 적은 범위 밖 그대로 둔다
 - **남의 앱의 ClickHouse 2배 세기** : `span-kind` 는 그 앱 환경변수라 우리가 못 넣는다
-- **`glossary.md` 의 「서버맵 → Service map」** : 화면 · 코드 · 이 문서는 서버맵인데 용어집이 다르다 (`#240` · ADR `#73` 을 되돌리는 일이라 ADR 줄이 필요하다)
+- **`glossary.md` 의 「Service map → Service map」** : 화면 · 코드 · 이 문서는 Service map 인데 용어집이 다르다 (`#240` · ADR `#73` 을 되돌리는 일이라 ADR 줄이 필요하다)
