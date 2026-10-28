@@ -30,3 +30,11 @@ data class OrderResponse(
         fun from(o: Order) = OrderResponse(o.id, o.productId, o.quantity, o.amount, o.status, o.createdAt)
     }
 }
+
+/** 주문이 끝났다는 알림. 재고 서비스가 읽어 조회 캐시를 다시 채운다 (#54) */
+data class OrderCompleted(
+    val orderId: Long,
+    val productId: String,
+    val quantity: Int,
+    val status: OrderStatus,
+)

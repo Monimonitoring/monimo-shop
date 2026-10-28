@@ -4,6 +4,13 @@ server:
 spring:
   application:
     name: shop-order
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19094}
+    producer:
+      properties:
+        # 브로커가 죽어 있을 때 send 가 메타데이터를 기다리며 멈추는 시간. 기본 60초면 주문 응답이 1분 멈춘다.
+        # 2초면 k6 가 보는 p95 를 흔들지만 주문은 끝난다 (알림은 못 해도 30초 TTL 이 캐시를 맞춘다)
+        max.block.ms: 2000
   datasource:
     # 로컬에서 직접 띄울 때 기본값. 컨테이너에서는 compose 가 MYSQL_HOST=mysql 로 덮어쓴다 (4단계)
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:13306}/${MYSQL_DATABASE:shop}
@@ -23,3 +30,10 @@ payment:
 # 재고 서비스 주소. 컨테이너끼리는 http://inventory:8093 (루트 Dockerfile 의 order 단계 기본값)
 inventory:
   base-url: ${INVENTORY_BASE_URL:http://localhost:8093}
+
+# 주문 완료를 알리는 비동기 경로 (#54). 서버맵에 비동기 간선이 나오는 자리다
+shop:
+  order:
+    # 비어 있으면 아무것도 보내지 않는다. compose 가 SHOP_ORDER_COMPLETED_TOPIC 으로 채운다.
+    # 내 컴퓨터에서 직접 띄울 때와 테스트에는 Kafka 가 없어서 비워 둔다
+    completed-topic: ${SHOP_ORDER_COMPLETED_TOPIC:}

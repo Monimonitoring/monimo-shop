@@ -8,6 +8,7 @@ dependencies {
     implementation(platform(libs.spring.boot.bom))
     implementation(libs.bundles.service.base)
     implementation(libs.bundles.mysql)
+    implementation(libs.bundles.kafka)
 
     testImplementation(libs.bundles.service.test)
     testImplementation(libs.bundles.mysql.test)

@@ -5,6 +5,12 @@ server:
 spring:
   application:
     name: shop-inventory
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:19094}
+    consumer:
+      group-id: shop-inventory
+      # 처음 붙을 때 쌓여 있던 것까지 다 읽지 않는다. 뒤처리는 최신 주문만 의미가 있다
+      auto-offset-reset: latest
   datasource:
     # 로컬에서 직접 띄울 때 기본값. 컨테이너에서는 compose 가 MYSQL_HOST=mysql 로 덮어쓴다. 주문 서비스와 같은 DB 를 쓰되 표는 다르다
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:13306}/${MYSQL_DATABASE:shop}
@@ -22,6 +28,11 @@ spring:
       # Lettuce 기본은 명령 60초 · 연결 10초. Redis 가 죽었을 때 요청마다 60초 기다리지 않게 줄인다 (research ⑤ 실측 : 60.06초 → 0.56초)
       timeout: 500ms
       connect-timeout: 1s
+
+# 주문 완료 알림을 읽는 자리 (#54) : shop.inventory.completed-topic
+# **일부러 여기 안 적는다.** OrderCompletedListener 가 @ConditionalOnProperty 로 이 이름이 있을 때만 생긴다.
+# 빈 값으로 적어 두면 "있다" 로 읽혀 리스너가 생기고, Kafka 없이 띄울 때 브로커를 계속 찾는다.
+# compose 가 SHOP_INVENTORY_COMPLETED_TOPIC 으로 넣는다. 소비자 그룹은 위 spring.kafka.consumer.group-id
 
 management:
   health:

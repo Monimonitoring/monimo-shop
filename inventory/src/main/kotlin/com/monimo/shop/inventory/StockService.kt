@@ -65,6 +65,27 @@ class StockService(
     }
 
     /**
+     * 주문이 끝난 뒤 조회 캐시를 **지우지 않고 다시 채운다** (#54 비동기 뒤처리).
+     *
+     * 차감은 커밋 뒤에 캐시를 지우기만 한다(evict). 그러면 다음 손님 조회가 반드시 MySQL 을 읽는다.
+     * 주문이 끝난 시점에 미리 채워 두면 그 조회가 Redis 에서 끝난다.
+     * 이 메서드는 토픽에서 온 알림으로 불린다(OrderCompletedListener). 손님 요청 흐름 밖이라 늦어도 상관없다.
+     *
+     * 상품이 없으면 아무것도 넣지 않고 null 을 돌려준다. 없는 상품을 캐시에 넣으면 404 가 캐시된다.
+     * Redis 가 죽어 PUT 이 실패해도 로그만 남긴다 : 안 채워도 다음 조회가 MySQL 을 읽어 맞춰진다
+     */
+    fun refreshCache(productId: String): Int? {
+        val qty = repository.findQty(productId) ?: return null
+        val cache = cacheManager.getCache(CACHE) ?: return qty
+        try {
+            cache.put(productId, StockResponse(productId, qty))
+        } catch (e: RuntimeException) {
+            log.warn("캐시 미리 채우기 실패 (Redis 장애?). 다음 조회가 MySQL 을 읽는다 : productId={}", productId, e)
+        }
+        return qty
+    }
+
+    /**
      * 커밋 뒤에 캐시를 지운다. 커밋 전에 지우면 그 틈에 다른 조회가 옛 값을 다시 채울 수 있다.
      * Redis 가 죽어 DEL 이 실패해도 차감은 이미 커밋됐으니 로그만 남긴다 (TTL 30초가 지나면 맞춰진다).
      * @Cacheable 쪽은 CacheConfig 의 LoggingCacheErrorHandler 가 같은 일을 하지만, 직접 부르는 evict 에는 그 처리기가 안 걸려 여기서 잡는다

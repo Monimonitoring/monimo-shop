@@ -32,6 +32,8 @@ testcontainers-mysql = { module = "org.testcontainers:mysql" }
 # 재고 서비스 캐시 (Redis, 클라이언트는 Boot 기본인 Lettuce). Service map 에 캐시 노드가 나오게 (#32). 버전은 Spring Boot BOM 이 정한다
 spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
 spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache" }
+# 주문 완료를 알리는 비동기 경로 (Kafka). 서버맵에 비동기 간선이 나오게 (#54, backend #259). 버전은 Spring Boot BOM 이 정한다
+spring-kafka = { module = "org.springframework.kafka:spring-kafka" }
 
 # agent-extension (compileOnly). 실행 때는 에이전트 안의 같은 클래스를 쓴다
 otel-javaagent-extension-api = { module = "io.opentelemetry.javaagent:opentelemetry-javaagent-extension-api", version.ref = "otel-javaagent" }
@@ -53,6 +55,8 @@ mysql = ["spring-boot-starter-jdbc", "mysql-connector-j"]
 mysql-test = ["spring-boot-testcontainers", "testcontainers-mysql"]
 # Redis 캐시 쓰는 모듈(inventory). @Cacheable 은 starter-cache, Redis 연결은 starter-data-redis
 redis-cache = ["spring-boot-starter-data-redis", "spring-boot-starter-cache"]
+# 비동기 경로를 쓰는 모듈(order 가 보내고 inventory 가 읽는다). 스팬은 에이전트의 Kafka 계측 모듈이 만든다 (앱 코드 0줄, ADR #33)
+kafka = ["spring-kafka"]
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
