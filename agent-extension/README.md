@@ -19,7 +19,7 @@ OTel Java Agent 에 얹는 스레드 덤프 명령 수신 Extension. 우리가 �
 - **Java 로 쓴다.** 런타임 의존성 0개, jar 약 19 KB. Kotlin 이면 kotlin-stdlib 를 넣고 이름을 바꿔 묶어야 한다. 테스트만 Kotest(Kotlin)
 - **모든 HTTP 호출을 `InstrumentationUtil.suppressInstrumentation` 으로 감싼다.** 안 감싸면 에이전트가 이 호출도 스팬으로 남겨 25초마다 가짜 트레이스가 쌓인다
 - 식별 값(`service.name` · `service.instance.id`)은 에이전트가 만든 Resource 에서 읽는다 (`ConfigCapture`). 백엔드 `agent_id` 와 같은 값이다
-- `THREAD_DUMP` 말고는 무시한다. 덤프는 jstack 모양, 스레드마다 스택 128줄까지. 10초 안에 또 오면 직전 결과를 다시 준다(덤프마다 JVM 이 잠깐 멈추므로)
+- `THREAD_DUMP` 말고는 무시한다. 덤프는 jstack 모양(상태 줄 · `<0x…> (a 클래스)` 락 줄 · 스레드별 `cpu=` · 데드락 절. nid · elapsed 는 없다), 스레드마다 스택 128줄까지. 10초 안에 또 오면 직전 결과를 다시 준다(덤프마다 JVM 이 잠깐 멈추므로)
 - 결과 보내기가 실패하면 1초 간격 3번까지, 404(이미 끝난 명령)면 그만. Collector 에 안 닿으면 1 → 60초 백오프 + 무작위
 
 ## 설정
