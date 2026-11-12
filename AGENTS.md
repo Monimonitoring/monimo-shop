@@ -83,13 +83,14 @@ CI 는 **build**(Gradle 컴파일 + 테스트) → **smoke**(compose 로 띄운 
 - `AGENTS.md` · `CLAUDE.md`, README 「AI 와 일한 방법」 절, `docs/prompts/`(프롬프트 로그 : 코드와 같은 PR 에). 하네스 정본은 backend `docs/seungjo/harness.md` 한 곳
 - 2026-10-26 문서 · 주석의 우리말 조어를 현업 이름으로 바꿨다 (backend `#240` · ADR `#73`).
 - 2026-10-26 코드 안 문자열도 같은 이름으로 바꿨다 (backend `#241`) : 테스트 이름 · Extension 로그 문구(`Collector 가 명령 폴링에 …`)
+- 2026-11-13 Extension 덤프 글을 jstack 과 같은 모양으로 (`#57`, web `#102`). e2e(11-10)에서 화면 파서(jstack 가정)가 우리 글의 상태 · 락을 못 읽어 전부 RUNNABLE 로 보였다. 상태 줄 `java.lang.Thread.State: …`, 락 줄 `<0x…> (a 클래스)`(identityHashCode), 스레드별 `cpu=`, 끝에 `Found one Java-level deadlock:` 절. 정보원은 ThreadMXBean 그대로라 JVM 멈춤 · 대상 JVM 요구가 안 바뀐다. nid · elapsed · JVM 내부 스레드는 없다. 자기 Attach(JDK 이미지 · `allowAttachSelf` 필요)와 `DiagnosticCommand` MBean(HotSpot 전용)은 비교 뒤 기각
 
 ## 6. 지금 막혀 있는 것
 
 | 무엇 | 안 풀면 |
 |---|---|
 | 에이전트는 2.x 에 머문다 (3.0 은 올리지 않기로 함, `#47`) | 막힌 것은 아니다. 3.0 은 DB 호출 Attribute 를 `db.system` 에서 `db.system.name` 으로 바꾸는데 backend `mv_server_map_1m` 은 `db.system` 만 봐서, 올리면 MySQL · Redis 가 Service map 에서 외부로 잘못 그려진다. **올리게 되면 먼저** 수집 쪽 집계가 두 키를 다 보게 한다 (`#32` research 2.2) |
-| 스레드 덤프 API server 팬아웃 · 화면 · CH 저장이 없다 | Collector `POST /internal/thread-dump` 까지만 있다. API server 팬아웃(`agentUuid` → service · instance, 503 재시도)은 재범, CH `thread_dumps` 저장(Q16)은 조회 쪽. 그 전까지는 curl 로만 뜬다 |
+| 덤프 머리줄에 `elapsed=` 가 없다 (`#57`) | ThreadMXBean 이 스레드 시작 시각을 주지 않는다. `cpu=` 만 있어도 "CPU 를 먹는 스레드" 는 찾을 수 있고(화면 정렬), 두 덤프의 `cpu=` 차이로 지금 쓰는 스레드를 가른다. nid 가 필요해지면(서버 셸 `top -H` 와 짝 맞추기) HotSpot 한정으로 `com.sun.management:type=DiagnosticCommand` 의 `threadPrint` 가 진짜 jstack 글을 준다(JRE 이미지에서 확인, 2026-11-13) |
 | 에이전트 오버헤드 기준이 빠듯하다 | 요구사항을 실측에 맞게 고쳤다(backend ADR `#56` : 파드당 CPU 1개 · 초당 주문 20건에서 1코어 대비 +3%p, 메모리 150MB). 지금 값은 통과(+1.4 ~ +2.1%p, 최대 141MB)지만 초당 40건이면 order · inventory 가 +3.5 · +3.6%p 로 넘고 메모리 여유는 9MB 다. 실제 파드 부하가 정해지거나 에이전트 버전을 올리면 `perf/overhead/` 로 다시 잰다 (`#36`). **`#51` 이 「설정으로 줄이는 길」을 닫았다** : 전송 간격 · 샘플링 · 배치로는 CPU 가 안 줄어 기준을 못 지키게 되면 **파드 limit 을 올리거나 계측 범위를 줄이는 것**뿐이다 |
 | 계측 범위 줄이기를 운영에 넣을지 못 정했다 (`#51`) | 메모리를 서비스마다 약 20MB 줄이지만 **메트릭 84건이 빠진다**(`#36` 이 짚은 hikaricp 커넥션 풀 지표 · 로그 MDC 의 `trace_id` 주입). 넣기 전에 셋을 확인한다 : ① 10회차로 다시 재기(지금 5회차 · 폭 간격 5 ~ 11MB) ② ClickHouse 에서 빠진 지표 이름 대조 ③ 로그 문자열의 `trace_id`. 넣으면 켜 둔 목록이 계약이 되어 **새 기술(Kafka · 외부 API)을 붙일 때마다 추가해야 하고 빠뜨리면 그 구간이 트레이스에서 조용히 사라진다** |
 | Service map 화면을 눈으로 확인하지 못했다 (`#54`) | 데이터는 API 와 ClickHouse 로 다 확인했지만 비동기 노드 모양 · 범례 · 간선 점선은 **빌드 · 테스트 · lint 까지만** 봤다. 브라우저 확장이 안 붙어 스크린샷을 못 찍었다. 중간발표 시연 녹화 전에 `http://localhost:5173` 에서 사람이 봐야 한다 |
